@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Shield, Zap, Globe, ArrowRight, CheckCircle2, BarChart3, Bell, Monitor, Cpu, Lock } from 'lucide-react';
+import { Activity, Shield, Zap, Globe, ArrowRight, CheckCircle2, BarChart3, Bell, Monitor, Cpu, Lock, Eye } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from '../lib/i18n';
 
@@ -133,7 +133,18 @@ export default function Landing() {
               <div className="p-2 bg-orange-500 rounded-xl">
                 <Activity className="w-6 h-6 text-white" />
               </div>
-              <span className="font-display">Eyeon<span className="text-orange-500">.site</span></span>
+              <span className="font-display flex items-center gap-0">
+                Eye
+                <span className="relative flex items-center justify-center mx-0.5">
+                  <Eye className="w-6 h-6 text-orange-500 stroke-[3]" />
+                  <motion.div 
+                    animate={{ scale: [1, 1.2, 1] }} 
+                    transition={{ duration: 2, repeat: Infinity }}
+                    className="absolute w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_5px_white]" 
+                  />
+                </span>
+                n<span className="text-orange-500">.site</span>
+              </span>
             </div>
             <p className="max-w-xs text-zinc-500 text-sm leading-relaxed">
               {t('landing.footer_brand_desc')}

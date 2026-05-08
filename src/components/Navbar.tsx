@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Activity, LogOut, Settings, LayoutDashboard, Bell, Shield, Globe } from 'lucide-react';
+import { Activity, LogOut, Settings, LayoutDashboard, Bell, Shield, Globe, Eye } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAuth } from '../lib/auth';
 import { useTranslation } from '../lib/i18n';
@@ -35,7 +35,18 @@ export default function Navbar({ user, workspace }: NavbarProps) {
           <div className="p-2 bg-orange-500 rounded-xl shadow-lg shadow-orange-500/20 group-hover:scale-110 transition-transform">
             <Activity className="w-5 h-5 text-white" />
           </div>
-          <span className="font-display tracking-tight">Eyeon<span className="text-orange-500">.site</span></span>
+          <span className="font-display tracking-tight flex items-center gap-0">
+            Eye
+            <span className="relative flex items-center justify-center mx-0.5">
+              <Eye className="w-5 h-5 text-orange-500 stroke-[3]" />
+              <motion.div 
+                animate={{ scale: [1, 1.2, 1] }} 
+                transition={{ duration: 2, repeat: Infinity }}
+                className="absolute w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_5px_white]" 
+              />
+            </span>
+            n<span className="text-orange-500">.site</span>
+          </span>
         </Link>
         
         <div className="hidden md:flex items-center gap-1 text-sm font-medium">
