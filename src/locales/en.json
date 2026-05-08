@@ -56,7 +56,7 @@
     "footer_legal": "Legal",
     "footer_privacy": "Privacy",
     "footer_terms": "Terms",
-    "footer_copyright": "© 2026 UptimeSaaS. All rights reserved.",
+    "footer_copyright": "© 2026 Eyeon.site. All rights reserved.",
     "footer_operational": "All Systems Operational"
   },
   "auth": {
@@ -197,7 +197,7 @@
     "smtp_pass": "Password",
     "smtp_from": "From Address",
     "telegram_title": "Telegram Integration",
-    "telegram_desc": "Optional: Leave blank to use the default UptimeSaaS system bot.",
+    "telegram_desc": "Optional: Leave blank to use the default Eyeon.site system bot.",
     "telegram_token": "Custom Bot Token",
     "update_workspace": "Update Workspace",
     "profile_updated": "Profile updated successfully",
@@ -409,7 +409,7 @@
     "get_started": "Get Started",
     "title_line1": "Built for",
     "title_line2": "Reliability",
-    "hero_desc": "UptimeSaaS was created with a single mission: to ensure that no downtime goes unnoticed. We provide enterprise-grade monitoring tools that are simple to use and powerful enough for any scale.",
+    "hero_desc": "Eyeon.site was created with a single mission: to ensure that no downtime goes unnoticed. We provide enterprise-grade monitoring tools that are simple to use and powerful enough for any scale.",
     "stat1": "Platform Uptime",
     "stat2": "Active Monitoring",
     "stat3": "Check Latency",
@@ -424,7 +424,7 @@
     "value4_title": "Global Reach",
     "value4_desc": "Monitor services worldwide with support for HTTP, TCP, ICMP Ping and more. No matter where your infrastructure is, we've got it covered.",
     "cta_title": "Ready to get started?",
-    "cta_desc": "Join thousands of teams who trust UptimeSaaS to monitor their critical infrastructure.",
+    "cta_desc": "Join thousands of teams who trust Eyeon.site to monitor their critical infrastructure.",
     "cta_button": "Start Monitoring Free"
   },
   "contact": {
@@ -469,7 +469,7 @@
   "privacy": {
     "title": "Privacy Policy",
     "last_updated": "Last Updated",
-    "intro": "At UptimeSaaS, we take your privacy seriously. This policy describes how we collect, use, and protect your personal information.",
+    "intro": "At Eyeon.site, we take your privacy seriously. This policy describes how we collect, use, and protect your personal information.",
     "s1_title": "Information We Collect",
     "s1_content": "We collect information you provide directly to us, such as your name, email address, and payment information when you create an account. We also collect technical data such as IP addresses, browser type, and usage patterns to improve our services.",
     "s2_title": "How We Use Your Information",
@@ -481,24 +481,24 @@
     "s5_title": "Your Rights",
     "s5_content": "You have the right to access, correct, or delete your personal data at any time. You can export your monitoring data or request account deletion through the Settings page or by contacting our support team.",
     "s6_title": "Contact Us",
-    "s6_content": "If you have any questions about this Privacy Policy, please contact us at privacy@uptimesaas.com."
+    "s6_content": "If you have any questions about this Privacy Policy, please contact us at privacy@eyeon.site."
   },
   "terms": {
     "title": "Terms of Service",
     "last_updated": "Last Updated",
-    "intro": "These Terms of Service govern your use of the UptimeSaaS platform. By using our services, you agree to these terms.",
+    "intro": "These Terms of Service govern your use of the Eyeon.site platform. By using our services, you agree to these terms.",
     "s1_title": "Acceptance of Terms",
-    "s1_content": "By accessing or using UptimeSaaS, you agree to be bound by these Terms of Service. If you do not agree to these terms, you may not use our services.",
+    "s1_content": "By accessing or using Eyeon.site, you agree to be bound by these Terms of Service. If you do not agree to these terms, you may not use our services.",
     "s2_title": "Service Description",
-    "s2_content": "UptimeSaaS provides website and server monitoring services, including HTTP, TCP, and ICMP Ping checks, SSL certificate monitoring, alert notifications, and public status pages. We strive to provide reliable monitoring but cannot guarantee 100% accuracy at all times.",
+    "s2_content": "Eyeon.site provides website and server monitoring services, including HTTP, TCP, and ICMP Ping checks, SSL certificate monitoring, alert notifications, and public status pages. We strive to provide reliable monitoring but cannot guarantee 100% accuracy at all times.",
     "s3_title": "User Accounts",
     "s3_content": "You are responsible for maintaining the security of your account credentials. You must provide accurate information when creating your account. You are responsible for all activities that occur under your account.",
     "s4_title": "Acceptable Use",
-    "s4_content": "You agree not to use UptimeSaaS for any unlawful purpose or to monitor services you do not own or have authorization to monitor. Excessive abuse of monitoring resources may result in account suspension.",
+    "s4_content": "You agree not to use Eyeon.site for any unlawful purpose or to monitor services you do not own or have authorization to monitor. Excessive abuse of monitoring resources may result in account suspension.",
     "s5_title": "Payment & Billing",
     "s5_content": "Paid plans are billed on a monthly basis. You may cancel your subscription at any time. Refunds are handled on a case-by-case basis. Free tier users may be subject to usage limits.",
     "s6_title": "Limitation of Liability",
-    "s6_content": "UptimeSaaS is provided \"as is\" without warranties of any kind. We shall not be liable for any indirect, incidental, or consequential damages arising from your use of our services, including but not limited to missed alerts or monitoring gaps.",
+    "s6_content": "Eyeon.site is provided \"as is\" without warranties of any kind. We shall not be liable for any indirect, incidental, or consequential damages arising from your use of our services, including but not limited to missed alerts or monitoring gaps.",
     "s7_title": "Changes to Terms",
     "s7_content": "We reserve the right to modify these terms at any time. We will notify you of significant changes via email or through our platform. Continued use of our services after changes constitutes acceptance of the new terms."
   }

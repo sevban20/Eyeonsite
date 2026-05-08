@@ -133,7 +133,7 @@ export default function Landing() {
               <div className="p-2 bg-orange-500 rounded-xl">
                 <Activity className="w-6 h-6 text-white" />
               </div>
-              <span className="font-display">UptimeSaaS</span>
+              <span className="font-display">Eyeon<span className="text-orange-500">.site</span></span>
             </div>
             <p className="max-w-xs text-zinc-500 text-sm leading-relaxed">
               {t('landing.footer_brand_desc')}

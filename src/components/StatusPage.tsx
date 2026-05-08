@@ -193,7 +193,7 @@ export default function StatusPage() {
           className="mt-24 text-center"
         >
           <p className="text-zinc-600 text-sm font-medium">
-            {t('status_page.powered_by')} <span className="text-orange-500 font-black uppercase tracking-widest ml-1">UptimeSaaS</span>
+            {t('status_page.powered_by')} <span className="text-orange-500 font-black uppercase tracking-widest ml-1">Eyeon.site</span>
           </p>
         </motion.footer>
       </div>

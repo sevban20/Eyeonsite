@@ -236,7 +236,7 @@ async function startServer() {
           <tr>
             <td align="center" style="padding:40px 40px 20px 40px;">
               <div style="background-color:#f97316;width:48px;height:48px;border-radius:12px;display:inline-block;line-height:48px;text-align:center;box-shadow:0 0 20px rgba(249,115,22,0.2);">
-                <span style="color:white;font-size:24px;font-weight:800;">U</span>
+                <span style="color:white;font-size:24px;font-weight:800;">E</span>
               </div>
             </td>
           </tr>
@@ -246,7 +246,7 @@ async function startServer() {
             <td style="padding:0 40px 40px 40px;text-align:center;">
               <h1 style="font-size:24px;font-weight:800;margin:0 0 12px 0;letter-spacing:-0.02em;">Hesabınızı Doğrulayın</h1>
               <p style="color:#a1a1aa;font-size:15px;line-height:24px;margin:0 0 32px 0;">
-                Merhaba ${name || 'Kullanıcı'}, UptimeSaaS'a hoş geldiniz! Hesabınızı etkinleştirmek için aşağıdaki butona tıklayın.
+                Merhaba ${name || 'Kullanıcı'}, Eyeon.site'a hoş geldiniz! Hesabınızı etkinleştirmek için aşağıdaki butona tıklayın.
               </p>
               
               <!-- CTA Button -->
@@ -267,7 +267,7 @@ async function startServer() {
         <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:520px;margin-top:20px;">
           <tr>
             <td align="center" style="color:#52525b;font-size:12px;padding:20px;">
-              &copy; 2026 UptimeSaaS. Tüm hakları saklıdır.
+              &copy; 2026 Eyeon.site. Tüm hakları saklıdır.
             </td>
           </tr>
         </table>
@@ -280,7 +280,7 @@ async function startServer() {
     await transporter.sendMail({
       from: smtpFrom,
       to: email,
-      subject: 'UptimeSaaS — E-posta Adresinizi Doğrulayın',
+      subject: 'Eyeon.site — E-posta Adresinizi Doğrulayın',
       html,
       text: `Hesabınızı doğrulamak için şu linke tıklayın: ${verifyUrl}`
     });
@@ -328,7 +328,7 @@ async function startServer() {
           <tr>
             <td align="center" style="padding:40px 40px 20px 40px;">
               <div style="background-color:#f97316;width:48px;height:48px;border-radius:12px;display:inline-block;line-height:48px;text-align:center;box-shadow:0 0 20px rgba(249,115,22,0.2);">
-                <span style="color:white;font-size:24px;font-weight:800;">U</span>
+                <span style="color:white;font-size:24px;font-weight:800;">E</span>
               </div>
             </td>
           </tr>
@@ -359,7 +359,7 @@ async function startServer() {
         <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:520px;margin-top:20px;">
           <tr>
             <td align="center" style="color:#52525b;font-size:12px;padding:20px;">
-              &copy; 2026 UptimeSaaS. Tüm hakları saklıdır.
+              &copy; 2026 Eyeon.site. Tüm hakları saklıdır.
             </td>
           </tr>
         </table>
@@ -372,7 +372,7 @@ async function startServer() {
     await transporter.sendMail({
       from: smtpFrom,
       to: email,
-      subject: 'UptimeSaaS — Şifre Sıfırlama İsteği',
+      subject: 'Eyeon.site — Şifre Sıfırlama İsteği',
       html,
       text: `Şifrenizi sıfırlamak için şu linke tıklayın: ${resetUrl}`
     });
@@ -1283,7 +1283,7 @@ async function startServer() {
       } else {
         // HTTP
         const httpMethod = (monitor.method || 'GET').toLowerCase();
-        let headers: any = { 'User-Agent': 'UptimeSaaS/2.0' };
+        let headers: any = { 'User-Agent': 'Eyeon.site/2.0' };
         if (monitor.customHeaders) {
           try { headers = { ...headers, ...JSON.parse(monitor.customHeaders) }; } catch (e) {}
         }

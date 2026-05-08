@@ -56,7 +56,7 @@
     "footer_legal": "Yasal",
     "footer_privacy": "Gizlilik",
     "footer_terms": "Koşullar",
-    "footer_copyright": "© 2026 UptimeSaaS. Tüm hakları saklıdır.",
+    "footer_copyright": "© 2026 Eyeon.site. Tüm hakları saklıdır.",
     "footer_operational": "Tüm Sistemler Çalışıyor"
   },
   "auth": {
@@ -197,7 +197,7 @@
     "smtp_pass": "Şifre",
     "smtp_from": "Gönderen Adresi",
     "telegram_title": "Telegram Entegrasyonu",
-    "telegram_desc": "İsteğe bağlı: Varsayılan UptimeSaaS sistem botunu kullanmak için boş bırakın.",
+    "telegram_desc": "İsteğe bağlı: Varsayılan Eyeon.site sistem botunu kullanmak için boş bırakın.",
     "telegram_token": "Özel Bot Anahtarı",
     "update_workspace": "Çalışma Alanını Güncelle",
     "profile_updated": "Profil başarıyla güncellendi",
@@ -426,7 +426,7 @@
     "get_started": "Başlayın",
     "title_line1": "Güvenilirlik",
     "title_line2": "İçin Tasarlandı",
-    "hero_desc": "UptimeSaaS tek bir misyonla oluşturuldu: hiçbir kesintinin fark edilmeden kalmamasını sağlamak. Kullanımı kolay ve her ölçekte yeterince güçlü, kurumsal düzeyde izleme araçları sunuyoruz.",
+    "hero_desc": "Eyeon.site tek bir misyonla oluşturuldu: hiçbir kesintinin fark edilmeden kalmamasını sağlamak. Kullanımı kolay ve her ölçekte yeterince güçlü, kurumsal düzeyde izleme araçları sunuyoruz.",
     "stat1": "Platform Çalışma Süresi",
     "stat2": "Aktif İzleme",
     "stat3": "Kontrol Gecikmesi",
@@ -441,7 +441,7 @@
     "value4_title": "Küresel Erişim",
     "value4_desc": "HTTP, TCP, ICMP Ping ve daha fazlası desteğiyle dünya çapında hizmetleri izleyin. Altyapınız nerede olursa olsun, biz oradayız.",
     "cta_title": "Başlamaya hazır mısınız?",
-    "cta_desc": "Kritik altyapılarını izlemek için UptimeSaaS'a güvenen binlerce ekibe katılın.",
+    "cta_desc": "Kritik altyapılarını izlemek için Eyeon.site'a güvenen binlerce ekibe katılın.",
     "cta_button": "Ücretsiz İzlemeye Başla"
   },
   "contact": {
@@ -486,7 +486,7 @@
   "privacy": {
     "title": "Gizlilik Politikası",
     "last_updated": "Son Güncelleme",
-    "intro": "UptimeSaaS olarak gizliliğinizi ciddiye alıyoruz. Bu politika, kişisel bilgilerinizi nasıl topladığımızı, kullandığımızı ve koruduğumuzu açıklar.",
+    "intro": "Eyeon.site olarak gizliliğinizi ciddiye alıyoruz. Bu politika, kişisel bilgilerinizi nasıl topladığımızı, kullandığımızı ve koruduğumuzu açıklar.",
     "s1_title": "Topladığımız Bilgiler",
     "s1_content": "Hesap oluşturduğunuzda doğrudan bize sağladığınız adınız, e-posta adresiniz ve ödeme bilgileriniz gibi bilgileri toplarız. Ayrıca hizmetlerimizi iyileştirmek için IP adresleri, tarayıcı türü ve kullanım kalıpları gibi teknik verileri de toplarız.",
     "s2_title": "Bilgilerinizi Nasıl Kullanırız",
@@ -498,24 +498,24 @@
     "s5_title": "Haklarınız",
     "s5_content": "Kişisel verilerinize istediğiniz zaman erişme, düzeltme veya silme hakkına sahipsiniz. İzleme verilerinizi dışa aktarabilir veya Ayarlar sayfasından ya da destek ekibimizle iletişime geçerek hesap silme talebinde bulunabilirsiniz.",
     "s6_title": "Bize Ulaşın",
-    "s6_content": "Bu Gizlilik Politikası hakkında herhangi bir sorunuz varsa, lütfen privacy@uptimesaas.com adresinden bizimle iletişime geçin."
+    "s6_content": "Bu Gizlilik Politikası hakkında herhangi bir sorunuz varsa, lütfen privacy@eyeon.site adresinden bizimle iletişime geçin."
   },
   "terms": {
     "title": "Kullanım Koşulları",
     "last_updated": "Son Güncelleme",
-    "intro": "Bu Kullanım Koşulları, UptimeSaaS platformunun kullanımınızı yönetir. Hizmetlerimizi kullanarak bu koşulları kabul etmiş olursunuz.",
+    "intro": "Bu Kullanım Koşulları, Eyeon.site platformunun kullanımınızı yönetir. Hizmetlerimizi kullanarak bu koşulları kabul etmiş olursunuz.",
     "s1_title": "Koşulların Kabulü",
-    "s1_content": "UptimeSaaS'a erişerek veya kullanarak bu Kullanım Koşullarına bağlı olmayı kabul edersiniz. Bu koşulları kabul etmiyorsanız hizmetlerimizi kullanamazsınız.",
+    "s1_content": "Eyeon.site'a erişerek veya kullanarak bu Kullanım Koşullarına bağlı olmayı kabul edersiniz. Bu koşulları kabul etmiyorsanız hizmetlerimizi kullanamazsınız.",
     "s2_title": "Hizmet Açıklaması",
-    "s2_content": "UptimeSaaS, HTTP, TCP ve ICMP Ping kontrolleri, SSL sertifika izleme, uyarı bildirimleri ve herkese açık durum sayfaları dahil web sitesi ve sunucu izleme hizmetleri sunar. Güvenilir izleme sağlamaya çalışırız ancak her zaman %100 doğruluk garanti edemeyiz.",
+    "s2_content": "Eyeon.site, HTTP, TCP ve ICMP Ping kontrolleri, SSL sertifika izleme, uyarı bildirimleri ve herkese açık durum sayfaları dahil web sitesi ve sunucu izleme hizmetleri sunar. Güvenilir izleme sağlamaya çalışırız ancak her zaman %100 doğruluk garanti edemeyiz.",
     "s3_title": "Kullanıcı Hesapları",
     "s3_content": "Hesap kimlik bilgilerinizin güvenliğini sağlamaktan siz sorumlusunuz. Hesabınızı oluştururken doğru bilgi sağlamanız gerekmektedir. Hesabınız altında gerçekleşen tüm faaliyetlerden siz sorumlusunuz.",
     "s4_title": "Kabul Edilebilir Kullanım",
-    "s4_content": "UptimeSaaS'ı yasa dışı herhangi bir amaçla veya sahip olmadığınız ya da izleme yetkiniz olmayan hizmetleri izlemek için kullanmamayı kabul edersiniz. İzleme kaynaklarının aşırı kötüye kullanılması hesabın askıya alınmasına neden olabilir.",
+    "s4_content": "Eyeon.site'ı yasa dışı herhangi bir amaçla veya sahip olmadığınız ya da izleme yetkiniz olmayan hizmetleri izlemek için kullanmamayı kabul edersiniz. İzleme kaynaklarının aşırı kötüye kullanılması hesabın askıya alınmasına neden olabilir.",
     "s5_title": "Ödeme ve Faturalandırma",
     "s5_content": "Ücretli planlar aylık olarak faturalandırılır. Aboneliğinizi istediğiniz zaman iptal edebilirsiniz. İadeler duruma göre ele alınır. Ücretsiz katman kullanıcıları kullanım sınırlarına tabi olabilir.",
     "s6_title": "Sorumluluk Sınırlaması",
-    "s6_content": "UptimeSaaS herhangi bir garanti olmaksızın \"olduğu gibi\" sağlanmaktadır. Kaçırılan uyarılar veya izleme boşlukları dahil ancak bunlarla sınırlı olmamak üzere, hizmetlerimizi kullanmanızdan kaynaklanan dolaylı, arızi veya sonuç niteliğindeki zararlardan sorumlu olmayacağız.",
+    "s6_content": "Eyeon.site herhangi bir garanti olmaksızın \"olduğu gibi\" sağlanmaktadır. Kaçırılan uyarılar veya izleme boşlukları dahil ancak bunlarla sınırlı olmamak üzere, hizmetlerimizi kullanmanızdan kaynaklanan dolaylı, arızi veya sonuç niteliğindeki zararlardan sorumlu olmayacağız.",
     "s7_title": "Koşullardaki Değişiklikler",
     "s7_content": "Bu koşulları istediğimiz zaman değiştirme hakkını saklı tutarız. Önemli değişiklikleri e-posta yoluyla veya platformumuz aracılığıyla size bildireceğiz. Değişikliklerden sonra hizmetlerimizi kullanmaya devam etmeniz, yeni koşulları kabul ettiğiniz anlamına gelir."
   }
