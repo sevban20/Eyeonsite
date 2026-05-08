@@ -1,0 +1,5 @@
+{
+  "name": "UptimeSaaS - Monitoring & Status Pages",
+  "description": "A comprehensive uptime monitoring SaaS with real-time alerts, response time charts, and multi-tenant workspaces.",
+  "requestFramePermissions": []
+}

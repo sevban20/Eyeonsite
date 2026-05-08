@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String    @id @default(uuid())
+  email                String    @unique
+  password             String?   // Optional for OAuth users
+  name                 String?
+  createdAt            DateTime  @default(now())
+
+  // Email verification
+  emailVerified        Boolean   @default(false)
+  emailVerifyToken     String?   @unique
+  emailVerifyExpires   DateTime?
+
+  // Password Reset
+  resetPasswordToken   String?   @unique
+  resetPasswordExpires DateTime?
+
+  // OAuth (infrastructure ready, disabled in UI)
+  googleId             String?   @unique
+  githubId             String?   @unique
+  provider             String    @default("local") // "local" | "google" | "github"
+
+  // Brute force protection
+  loginAttempts        Int       @default(0)
+  lockUntil            DateTime?
+
+  workspaces           Workspace[]
+  workspaceMembers     WorkspaceMember[]
+}
+
+model Workspace {
+  id               String             @id @default(uuid())
+  name             String
+  userId           String
+  user             User               @relation(fields: [userId], references: [id])
+  monitors         Monitor[]
+  statusPages      PublicStatusPage[]
+  createdAt        DateTime           @default(now())
+  smtpHost         String?
+  smtpPort         Int?
+  smtpUser         String?
+  smtpPass         String?
+  smtpFrom         String?
+  telegramBotToken String?
+  logRetentionDays Int                @default(90)
+  members          WorkspaceMember[]
+}
+
+model Monitor {
+  id            String    @id @default(uuid())
+  name          String
+  monitorType   String    @default("HTTP") // HTTP, TCP, HEARTBEAT
+  url           String?   // Optional for TCP, optional for Heartbeat
+  port          Int?      // For TCP monitors
+  expectedKeyword String? // For HTTP assertion
+  customHeaders String?   // For HTTP API checks (JSON string)
+  heartbeatGrace Int      @default(5) // Grace period in minutes for HEARTBEAT
+  method        String    @default("GET")
+  interval      Int       @default(60)
+  status        String    @default("up") // "up", "paused", "maintenance"
+  currentStatus String    @default("up") // "up", "down", "degraded", "maintenance"
+  lastChecked   DateTime?
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pingLogs      PingLog[]
+  maintenanceWindows MaintenanceWindow[]
+  statusPages   PublicStatusPage[] // Implicit Many-to-Many
+  createdAt     DateTime  @default(now())
+  alertThreshold        Int     @default(2)
+  alertEmail            String?
+  slackWebhook          String?
+  telegramChatId        String?
+  zoomWebhook           String?
+  discordWebhook        String?
+  teamsWebhook          String?
+  genericWebhook        String?
+  responseTimeThreshold Int?
+  consecutiveFailures   Int     @default(0)
+  incidentActive        Boolean @default(false)
+  notifyOnDegraded      Boolean @default(false)
+
+  // SSL / TLS Certificate Tracking
+  sslCheckEnabled Boolean   @default(true)
+  sslExpiry       DateTime?
+  sslIssuer       String?
+  sslSubject      String?
+  sslDaysLeft     Int?
+  sslValid        Boolean?
+  sslLastChecked  DateTime?
+
+  // DNS Tracking
+  dnsResolutionTime Int?
+  dnsResolvedIp     String?
+  dnsLastChanged    DateTime?
+}
+
+model PingLog {
+  id           String   @id @default(uuid())
+  monitorId    String
+  monitor      Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  timestamp    DateTime @default(now())
+  status       Int      // 1 = up, 0 = down, 2 = degraded
+  responseTime Int
+  statusCode   Int
+  errorMessage String?
+}
+
+model MaintenanceWindow {
+  id          String   @id @default(uuid())
+  monitorId   String
+  monitor     Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  startTime   DateTime
+  endTime     DateTime
+  timezone    String   @default("UTC")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model PublicStatusPage {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  slug        String    @unique
+  title       String    @default("System Status")
+  description String?
+  themeColor  String    @default("#f97316") // Orange-500 default
+  logoUrl     String?
+  monitors    Monitor[] // Implicit Many-to-Many
+  createdAt   DateTime  @default(now())
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        String    @default("ADMIN") // OWNER or ADMIN
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+}

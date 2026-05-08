@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "workspaces": {
+      "title": "Workspace",
+      "description": "A shared environment for a team or individual user.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the workspace." },
+        "ownerId": { "type": "string", "description": "UID of the user who owns the workspace." },
+        "plan": { "type": "string", "enum": ["free", "pro"], "description": "Subscription plan." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp." }
+      },
+      "required": ["name", "ownerId", "plan", "createdAt"]
+    },
+    "monitors": {
+      "title": "Monitor",
+      "description": "A web service being monitored.",
+      "type": "object",
+      "properties": {
+        "workspaceId": { "type": "string", "description": "ID of the workspace this monitor belongs to." },
+        "name": { "type": "string", "description": "Display name for the monitor." },
+        "url": { "type": "string", "format": "uri", "description": "URL to ping." },
+        "method": { "type": "string", "enum": ["GET", "POST", "HEAD"], "description": "HTTP method." },
+        "interval": { "type": "integer", "description": "Ping interval in seconds." },
+        "status": { "type": "string", "enum": ["up", "down", "paused"], "description": "Current status." },
+        "alertThreshold": { "type": "integer", "description": "Consecutive failures before alerting." },
+        "alertEmail": { "type": "string", "description": "Email for notifications." },
+        "slackWebhook": { "type": "string", "description": "Slack webhook URL." },
+        "lastChecked": { "type": "string", "format": "date-time", "description": "Last check timestamp." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp." }
+      },
+      "required": ["workspaceId", "name", "url", "method", "interval", "status", "createdAt"]
+    },
+    "pingLogs": {
+      "title": "Ping Log",
+      "description": "Historical data for a monitor ping.",
+      "type": "object",
+      "properties": {
+        "monitorId": { "type": "string", "description": "ID of the monitor." },
+        "workspaceId": { "type": "string", "description": "ID of the workspace." },
+        "status": { "type": "integer", "description": "1 for UP, 0 for DOWN." },
+        "responseTime": { "type": "integer", "description": "Response time in milliseconds." },
+        "statusCode": { "type": "integer", "description": "HTTP status code." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Ping timestamp." }
+      },
+      "required": ["monitorId", "workspaceId", "status", "responseTime", "statusCode", "timestamp"]
+    },
+    "alertChannels": {
+      "title": "Alert Channel",
+      "description": "A notification destination.",
+      "type": "object",
+      "properties": {
+        "workspaceId": { "type": "string", "description": "ID of the workspace." },
+        "type": { "type": "string", "enum": ["email", "telegram"], "description": "Channel type." },
+        "value": { "type": "string", "description": "Email address or Telegram chat ID." },
+        "enabled": { "type": "boolean", "description": "Whether the channel is active." }
+      },
+      "required": ["workspaceId", "type", "value", "enabled"]
+    }
+  },
+  "firestore": {
+    "/workspaces/{workspaceId}": { "schema": "workspaces", "description": "Workspace data." },
+    "/monitors/{monitorId}": { "schema": "monitors", "description": "Monitor configurations." },
+    "/pingLogs/{logId}": { "schema": "pingLogs", "description": "Historical ping data." },
+    "/alertChannels/{channelId}": { "schema": "alertChannels", "description": "Notification settings." }
+  }
+}
