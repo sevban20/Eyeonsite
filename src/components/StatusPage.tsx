@@ -157,13 +157,13 @@ export default function StatusPage() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.3 + (idx * 0.05) }}
                 key={monitor.id} 
-                className="px-10 py-8 flex flex-col gap-6 hover:bg-white/[0.02] transition-colors group"
+                className="px-10 py-8 flex flex-col gap-6 hover:bg-white/[0.02] transition-colors group/row"
               >
                 {/* Top Row: Details & Status */}
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
                   <div className="flex items-center gap-6">
-                    <div className="p-3 bg-zinc-900 rounded-2xl border border-zinc-800 group-hover:border-zinc-700 transition-colors">
-                      <Globe className="w-6 h-6 text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+                    <div className="p-3 bg-zinc-900 rounded-2xl border border-zinc-800 group-hover/row:border-zinc-700 transition-colors">
+                      <Globe className="w-6 h-6 text-zinc-500 group-hover/row:text-zinc-300 transition-colors" />
                     </div>
                     <div>
                       <span className="font-black text-xl text-white block mb-1">{monitor.name}</span>
@@ -203,11 +203,11 @@ export default function StatusPage() {
                         return (
                           <div
                             key={i}
-                            className={`flex-1 rounded-sm relative group cursor-pointer transition-all hover:scale-y-110 hover:opacity-85 ${colorClass}`}
+                            className={`flex-1 rounded-sm relative group/bar cursor-pointer transition-all hover:scale-y-110 hover:opacity-85 ${colorClass}`}
                             style={{ height: day.status === 'nodata' ? '20%' : '100%' }}
                           >
                             {/* Tooltip */}
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max bg-zinc-900 border border-zinc-800 text-white text-[11px] px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-2xl">
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max bg-zinc-900 border border-zinc-800 text-white text-[11px] px-3 py-2 rounded-xl opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none z-10 shadow-2xl">
                               <div className="font-bold mb-0.5">{formattedDate}</div>
                               <div className="text-zinc-400">
                                 {day.status === 'nodata'
