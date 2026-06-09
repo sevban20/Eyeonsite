@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
@@ -1118,11 +1118,106 @@ async function startServer() {
     try {
       const page = await prisma.publicStatusPage.findUnique({
         where: { slug: req.params.slug },
-        include: { monitors: { select: { id: true, name: true, currentStatus: true, interval: true, url: true } } }
+        include: { monitors: { select: { id: true, name: true, currentStatus: true, interval: true, url: true, status: true } } }
       });
       if (!page) return res.status(404).json({ error: 'Not found' });
+
+      const monitorIds = page.monitors.map(m => m.id);
+      
+      if (monitorIds.length > 0) {
+        const cutoffDate = new Date();
+        cutoffDate.setUTCHours(0, 0, 0, 0);
+        cutoffDate.setUTCDate(cutoffDate.getUTCDate() - 90);
+
+        const results = await prisma.$queryRaw<any[]>`
+          SELECT 
+            "monitorId",
+            date_trunc('day', timestamp) AS day,
+            count(*)::integer AS total,
+            sum(case when status = 0 then 1 else 0 end)::integer AS down,
+            sum(case when status = 2 then 1 else 0 end)::integer AS degraded
+          FROM "PingLog"
+          WHERE "monitorId" IN (${Prisma.join(monitorIds)})
+            AND timestamp >= ${cutoffDate}
+          GROUP BY "monitorId", day
+          ORDER BY day ASC
+        `;
+
+        // Generate the last 90 days of date strings in UTC "YYYY-MM-DD"
+        const historyDays = 90;
+        const dates: string[] = [];
+        for (let i = historyDays - 1; i >= 0; i--) {
+          const d = new Date();
+          d.setUTCHours(0, 0, 0, 0);
+          d.setUTCDate(d.getUTCDate() - i);
+          dates.push(d.toISOString().split('T')[0]);
+        }
+
+        // Map results by monitor and day
+        const monitorHistoryMap: Record<string, Record<string, { total: number, down: number, degraded: number }>> = {};
+        for (const row of results) {
+          const mId = row.monitorId;
+          const dayStr = new Date(row.day).toISOString().split('T')[0];
+          if (!monitorHistoryMap[mId]) {
+            monitorHistoryMap[mId] = {};
+          }
+          monitorHistoryMap[mId][dayStr] = {
+            total: row.total,
+            down: row.down,
+            degraded: row.degraded
+          };
+        }
+
+        // Attach history to each monitor
+        for (const monitor of page.monitors) {
+          const history = dates.map(dateStr => {
+            const dayData = monitorHistoryMap[monitor.id]?.[dateStr];
+            if (!dayData || dayData.total === 0) {
+              return {
+                date: dateStr,
+                uptime: -1,
+                status: 'nodata',
+                down: 0
+              };
+            }
+            const { total, down, degraded } = dayData;
+            const uptime = parseFloat(((total - down) / total * 100).toFixed(2));
+            
+            let status = 'up';
+            if (down > 0) {
+              if (down / total > 0.1) {
+                status = 'down';
+              } else {
+                status = 'partial_down';
+              }
+            } else if (degraded > 0) {
+              status = 'degraded';
+            }
+            
+            return {
+              date: dateStr,
+              uptime,
+              status,
+              down
+            };
+          });
+
+          // Calculate average uptime (excluding nodata)
+          const validHistory = history.filter(h => h.uptime > -1);
+          const avgUptime = validHistory.length > 0
+            ? parseFloat((validHistory.reduce((acc, curr) => acc + curr.uptime, 0) / validHistory.length).toFixed(2))
+            : 100;
+
+          (monitor as any).history = history;
+          (monitor as any).avgUptime = avgUptime;
+        }
+      }
+
       res.json(page);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { 
+      log(`DEBUG: Error in public-status API: ${e.message}`);
+      res.status(500).json({ error: e.message }); 
+    }
   });
 
   // --- NOTIFICATION ENGINE ---

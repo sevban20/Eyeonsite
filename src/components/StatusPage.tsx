@@ -11,7 +11,7 @@ export default function StatusPage() {
   const [statusPage, setStatusPage] = useState<any>(null);
   const [monitors, setMonitors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
 
   useEffect(() => {
     if (!slug) return;
@@ -34,7 +34,11 @@ export default function StatusPage() {
       if (statusPage && updatedMonitor.workspaceId === statusPage.workspaceId) {
         setMonitors(prev => {
           if (prev.some(m => m.id === updatedMonitor.id)) {
-            return prev.map(m => m.id === updatedMonitor.id ? updatedMonitor : m);
+            return prev.map(m => m.id === updatedMonitor.id ? {
+              ...updatedMonitor,
+              history: m.history,
+              avgUptime: m.avgUptime
+            } : m);
           }
           return prev;
         });
@@ -153,29 +157,81 @@ export default function StatusPage() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.3 + (idx * 0.05) }}
                 key={monitor.id} 
-                className="px-10 py-8 flex flex-col sm:flex-row items-center justify-between gap-6 hover:bg-white/[0.02] transition-colors group"
+                className="px-10 py-8 flex flex-col gap-6 hover:bg-white/[0.02] transition-colors group"
               >
-                <div className="flex items-center gap-6">
-                  <div className="p-3 bg-zinc-900 rounded-2xl border border-zinc-800 group-hover:border-zinc-700 transition-colors">
-                    <Globe className="w-6 h-6 text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+                {/* Top Row: Details & Status */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                  <div className="flex items-center gap-6">
+                    <div className="p-3 bg-zinc-900 rounded-2xl border border-zinc-800 group-hover:border-zinc-700 transition-colors">
+                      <Globe className="w-6 h-6 text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+                    </div>
+                    <div>
+                      <span className="font-black text-xl text-white block mb-1">{monitor.name}</span>
+                      <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{monitor.url}</span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="font-black text-xl text-white block mb-1">{monitor.name}</span>
-                    <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{monitor.url}</span>
+                  <div className="flex items-center gap-4 self-end sm:self-auto">
+                    <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] ${
+                      monitor.status === 'paused' ? 'bg-zinc-800 text-zinc-500' :
+                      monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                    }`}>
+                      {monitor.status === 'paused' ? t('dashboard.paused').toUpperCase() : monitor.currentStatus === 'up' ? t('status_page.operational').toUpperCase() : monitor.currentStatus === 'degraded' ? t('status_page.degraded').toUpperCase() : t('status_page.down').toUpperCase()}
+                    </div>
+                    <div className={`w-3 h-3 rounded-full shadow-lg ${
+                      monitor.status === 'paused' ? 'bg-zinc-700' :
+                      monitor.currentStatus === 'up' ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-red-500 shadow-red-500/20'
+                    }`} />
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] ${
-                    monitor.status === 'paused' ? 'bg-zinc-800 text-zinc-500' :
-                    monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
-                  }`}>
-                    {monitor.status === 'paused' ? t('dashboard.paused').toUpperCase() : monitor.currentStatus === 'up' ? t('status_page.operational').toUpperCase() : monitor.currentStatus === 'degraded' ? t('status_page.degraded').toUpperCase() : t('status_page.down').toUpperCase()}
+
+                {/* Bottom Row: Uptime History Bar */}
+                {monitor.history && (
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-end gap-[2px] h-7 w-full">
+                      {monitor.history.map((day: any, i: number) => {
+                        let colorClass = 'bg-zinc-800'; // Default: no data
+                        if (day.status === 'up') colorClass = 'bg-emerald-500';
+                        else if (day.status === 'partial_down') colorClass = 'bg-amber-500';
+                        else if (day.status === 'degraded') colorClass = 'bg-yellow-500';
+                        else if (day.status === 'down') colorClass = 'bg-red-500';
+
+                        const formattedDate = new Date(day.date).toLocaleDateString(
+                          language === 'tr' ? 'tr-TR' : 'en-US',
+                          { day: 'numeric', month: 'short', year: 'numeric' }
+                        );
+
+                        return (
+                          <div
+                            key={i}
+                            className={`flex-1 rounded-sm relative group cursor-pointer transition-all hover:scale-y-110 hover:opacity-85 ${colorClass}`}
+                            style={{ height: day.status === 'nodata' ? '20%' : '100%' }}
+                          >
+                            {/* Tooltip */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max bg-zinc-900 border border-zinc-800 text-white text-[11px] px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-2xl">
+                              <div className="font-bold mb-0.5">{formattedDate}</div>
+                              <div className="text-zinc-400">
+                                {day.status === 'nodata'
+                                  ? t('dashboard.no_data')
+                                  : t('monitor.uptime_desc').replace('{uptime}', day.uptime.toFixed(2))}
+                              </div>
+                              {day.down > 0 && (
+                                <div className="text-red-400 mt-0.5 font-semibold">
+                                  {t('monitor.failed_checks').replace('{count}', day.down.toString())}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] font-black text-zinc-500 uppercase tracking-widest">
+                      <span>{t('monitor.90_days_ago')}</span>
+                      <span className="text-zinc-400">{monitor.avgUptime !== undefined ? `${monitor.avgUptime}% ${t('monitor.uptime').toLowerCase()}` : ''}</span>
+                      <span>{t('monitor.today')}</span>
+                    </div>
                   </div>
-                  <div className={`w-3 h-3 rounded-full shadow-lg ${
-                    monitor.status === 'paused' ? 'bg-zinc-700' :
-                    monitor.currentStatus === 'up' ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-red-500 shadow-red-500/20'
-                  }`} />
-                </div>
+                )}
               </motion.div>
             ))}
             {monitors.length === 0 && (

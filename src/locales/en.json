@@ -257,6 +257,7 @@
     "downtime": "Downtime:",
     "calculating": "Calculating...",
     "30_days_ago": "30 days ago",
+    "90_days_ago": "90 days ago",
     "today": "Today",
     "uptime_desc": "{uptime}% uptime",
     "failed_checks": "{count} failed checks",

@@ -257,6 +257,7 @@
     "downtime": "Kesinti:",
     "calculating": "Hesaplanıyor...",
     "30_days_ago": "30 gün önce",
+    "90_days_ago": "90 gün önce",
     "today": "Bugün",
     "uptime_desc": "%{uptime} çalışma süresi",
     "failed_checks": "{count} başarısız kontrol",
