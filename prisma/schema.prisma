@@ -42,6 +42,7 @@ model Workspace {
   userId           String
   user             User               @relation(fields: [userId], references: [id])
   monitors         Monitor[]
+  monitorGroups    MonitorGroup[]
   statusPages      PublicStatusPage[]
   createdAt        DateTime           @default(now())
   smtpHost         String?
@@ -52,6 +53,18 @@ model Workspace {
   telegramBotToken String?
   logRetentionDays Int                @default(90)
   members          WorkspaceMember[]
+}
+
+model MonitorGroup {
+  id          String    @id @default(uuid())
+  name        String
+  color       String    @default("#f97316")
+  order       Int       @default(0)
+  collapsed   Boolean   @default(false)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  monitors    Monitor[]
+  createdAt   DateTime  @default(now())
 }
 
 model Monitor {
@@ -70,6 +83,8 @@ model Monitor {
   lastChecked   DateTime?
   workspaceId   String
   workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  groupId       String?
+  group         MonitorGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   pingLogs      PingLog[]
   maintenanceWindows MaintenanceWindow[]
   statusPages   PublicStatusPage[] // Implicit Many-to-Many

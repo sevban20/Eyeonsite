@@ -63,10 +63,24 @@ const monitorCreateSchema = z.object({
   port: z.number().int().optional().nullable(),
   expectedKeyword: z.string().optional().nullable(),
   customHeaders: z.string().optional().nullable(),
-  heartbeatGrace: z.number().int().default(5)
+  heartbeatGrace: z.number().int().default(5),
+  groupId: z.string().uuid().optional().nullable()
 });
 
 const monitorUpdateSchema = monitorCreateSchema.partial();
+
+const monitorGroupCreateSchema = z.object({
+  name: z.string().min(1).max(100),
+  color: z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i).default('#f97316'),
+  workspaceId: z.string().uuid()
+});
+
+const monitorGroupUpdateSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  color: z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i).optional(),
+  collapsed: z.boolean().optional(),
+  order: z.number().int().optional()
+});
 
 // --- SSL CHECK FUNCTION ---
 async function checkSSL(url: string): Promise<{
@@ -793,6 +807,110 @@ async function startServer() {
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
       await prisma.workspaceMember.delete({ where: { id: req.params.memberId } });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Monitor Groups
+  app.get('/api/monitor-groups', authenticateToken, async (req: any, res) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+      
+      const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
+      const groups = await prisma.monitorGroup.findMany({ 
+        where: { workspaceId },
+        orderBy: { order: 'asc' }
+      });
+      res.json(groups);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/monitor-groups', authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = monitorGroupCreateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      
+      const ws = await checkWorkspaceAccess(parsed.data.workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
+      const lastGroup = await prisma.monitorGroup.findFirst({
+        where: { workspaceId: parsed.data.workspaceId },
+        orderBy: { order: 'desc' }
+      });
+      const nextOrder = lastGroup ? lastGroup.order + 1 : 0;
+      
+      const group = await prisma.monitorGroup.create({ 
+        data: { ...parsed.data, order: nextOrder } 
+      });
+      res.json(group);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/monitor-groups/reorder', authenticateToken, async (req: any, res) => {
+    try {
+      const { groupIds } = req.body; // Array of group IDs in the new order
+      if (!Array.isArray(groupIds)) return res.status(400).json({ error: 'Invalid group IDs array' });
+
+      // Assuming all groups belong to the same workspace, check first group
+      if (groupIds.length > 0) {
+        const group = await prisma.monitorGroup.findUnique({ where: { id: groupIds[0] } });
+        if (!group) return res.status(404).json({ error: 'Group not found' });
+        const ws = await checkWorkspaceAccess(group.workspaceId, req.user.id);
+        if (!ws) return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      const updatePromises = groupIds.map((id: string, index: number) =>
+        prisma.monitorGroup.update({
+          where: { id },
+          data: { order: index }
+        })
+      );
+      
+      await prisma.$transaction(updatePromises);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/monitor-groups/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.monitorGroup.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      
+      const ws = await checkWorkspaceAccess(existing.workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+      
+      const parsed = monitorGroupUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      
+      const group = await prisma.monitorGroup.update({ where: { id: req.params.id }, data: parsed.data });
+      res.json(group);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/monitor-groups/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.monitorGroup.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      
+      const ws = await checkWorkspaceAccess(existing.workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+      
+      // The relation has onDelete: Cascade for Workspace->MonitorGroup. 
+      // For MonitorGroup->Monitor we have onDelete: SetNull. So deleting a group will just unlink the monitors.
+      await prisma.monitorGroup.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

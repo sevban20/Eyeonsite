@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, CheckCircle2, XCircle, Clock, ChevronRight, Trash2, Pause, Play, Globe, ExternalLink, Activity, Search, Filter, ArrowUpRight, CheckSquare, Square, Lock } from 'lucide-react';
+import { Plus, CheckCircle2, XCircle, Clock, ChevronRight, ChevronDown, Trash2, Pause, Play, Globe, ExternalLink, Activity, Search, Filter, ArrowUpRight, CheckSquare, Square, Lock, FolderPlus, Folder, MoreVertical, Edit2, FolderOpen } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -66,24 +66,150 @@ function MiniAvailabilityHistory({ monitorId }: { monitorId: string }) {
   );
 }
 
+function MonitorCard({ monitor, selectedMonitors, toggleSelectMonitor, toggleStatus, deleteMonitor }: any) {
+  const { t } = useTranslation();
+  return (
+    <motion.div 
+      layout
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      className={`group glass p-4 rounded-2xl transition-all card-gradient cursor-pointer ${
+        selectedMonitors.includes(monitor.id) ? 'border-orange-500/50 bg-orange-500/[0.02]' : 'hover:border-zinc-700'
+      }`}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('a')) {
+          return;
+        }
+        toggleSelectMonitor(monitor.id);
+      }}
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4 flex-1 min-w-0">
+          <div className="flex items-center justify-center w-6 h-6">
+            {selectedMonitors.includes(monitor.id) ? (
+              <CheckSquare className="w-5 h-5 text-orange-500" />
+            ) : (
+              <Square className="w-5 h-5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
+            )}
+          </div>
+          <div className="relative">
+            <div className={`w-3 h-3 rounded-full ${
+              monitor.status === 'paused' ? 'bg-zinc-600' : 
+              monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
+              monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
+            }`} />
+            {monitor.status !== 'paused' && (
+              <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${
+                monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
+                monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
+              }`} />
+            )}
+          </div>
+          
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-3 mb-1">
+              <Link to={`/monitor/${monitor.id}`} className="font-bold text-zinc-100 hover:text-orange-500 transition-colors truncate font-display text-lg">
+                {monitor.name}
+              </Link>
+              <div className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                monitor.status === 'paused' ? 'bg-zinc-800 text-zinc-500' : 
+                monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 
+                monitor.currentStatus === 'degraded' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' : 
+                'bg-red-500/10 text-red-500 border border-red-500/20'
+              }`}>
+                {monitor.status === 'paused' ? t('dashboard.paused') : monitor.currentStatus === 'up' ? t('dashboard.operational') : monitor.currentStatus === 'degraded' ? t('dashboard.degraded') : t('dashboard.down')}
+              </div>
+              {monitor.monitorType === 'HTTP' && monitor.sslLastChecked && (
+                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                  monitor.sslDaysLeft !== null && monitor.sslDaysLeft <= 0 ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                  !monitor.sslValid ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                  monitor.sslDaysLeft <= 7 ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                  monitor.sslDaysLeft <= 30 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                  'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                }`} title="SSL Certificate">
+                  <Lock className="w-2.5 h-2.5" />
+                  {monitor.sslDaysLeft !== null && monitor.sslDaysLeft <= 0 ? 'EXP' : monitor.sslValid ? (monitor.sslDaysLeft + 'd') : 'ERR'}
+                </div>
+              )}
+              <a href={monitor.url} target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-zinc-400">
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] text-zinc-500 font-medium">
+              <span className="truncate max-w-[250px] font-mono">{monitor.url}</span>
+              <span className="text-zinc-800">•</span>
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {monitor.interval}s</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <MiniAvailabilityHistory monitorId={monitor.id} />
+          <div className="hidden lg:flex flex-col items-end">
+            <span className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mb-1">Last Check</span>
+            <span className="text-[11px] font-medium text-zinc-400">
+              {monitor.lastChecked ? formatDistanceToNow(new Date(monitor.lastChecked), { addSuffix: true }) : 'Never'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={(e) => toggleStatus(monitor, e)}
+              className={`p-2.5 rounded-xl transition-colors ${
+                monitor.status === 'paused' 
+                  ? 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700' 
+                  : 'hover:bg-zinc-800 text-zinc-500 hover:text-zinc-100'
+              }`}
+              title={monitor.status === 'paused' ? 'Resume' : 'Pause'}
+            >
+              {monitor.status === 'paused' ? <Play className="w-4 h-4 fill-current" /> : <Pause className="w-4 h-4 fill-current" />}
+            </button>
+            <button 
+              onClick={() => deleteMonitor(monitor.id)}
+              className="p-2.5 hover:bg-red-500/10 rounded-xl text-zinc-500 hover:text-red-500 transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <Link to={`/monitor/${monitor.id}`} className="p-2.5 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-zinc-100 transition-colors">
+              <ArrowUpRight className="w-5 h-5" />
+            </Link>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function Dashboard({ user, workspace }: DashboardProps) {
   const { t } = useTranslation();
   const [monitors, setMonitors] = useState<any[]>([]);
+  const [monitorGroups, setMonitorGroups] = useState<any[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newMonitor, setNewMonitor] = useState({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', interval: 60, method: 'GET' });
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [newMonitor, setNewMonitor] = useState({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', interval: 60, method: 'GET', groupId: '' });
+  const [newGroup, setNewGroup] = useState({ name: '', color: '#f97316' });
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMonitors, setSelectedMonitors] = useState<string[]>([]);
+  const [groupDropdownOpen, setGroupDropdownOpen] = useState<string | null>(null);
 
   useEffect(() => {
     if (workspace) {
       const fetchMonitors = async () => {
         try {
-          const res = await api.get(`/monitors?workspaceId=${workspace.id}`);
-          setMonitors(res.data);
+          const [monitorsRes, groupsRes] = await Promise.all([
+            api.get(`/monitors?workspaceId=${workspace.id}`),
+            api.get(`/monitor-groups?workspaceId=${workspace.id}`)
+          ]);
+          setMonitors(monitorsRes.data);
+          setMonitorGroups(groupsRes.data);
           setLoading(false);
         } catch (error) {
-          console.error('Error fetching monitors:', error);
+          console.error('Error fetching data:', error);
           setLoading(false);
         }
       };
@@ -125,20 +251,93 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     if (!workspace) return;
     
     try {
-      await api.post('/monitors', {
+      const payload: any = {
         ...newMonitor,
-        port: newMonitor.port ? parseInt(newMonitor.port) : null,
+        port: newMonitor.port ? parseInt(newMonitor.port as any) : null,
         url: newMonitor.url || null,
         workspaceId: workspace.id,
         status: 'up',
         currentStatus: 'up'
-      });
+      };
+      if (payload.groupId === '') {
+        delete payload.groupId;
+      }
+
+      await api.post('/monitors', payload);
       setShowAddModal(false);
-      setNewMonitor({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', interval: 60, method: 'GET' });
+      setNewMonitor({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', interval: 60, method: 'GET', groupId: '' });
       toast.success('Monitor created successfully');
     } catch (error) {
       console.error('Error adding monitor:', error);
       toast.error('Failed to create monitor');
+    }
+  };
+
+  const handleAddGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!workspace) return;
+    
+    try {
+      const res = await api.post('/monitor-groups', {
+        ...newGroup,
+        workspaceId: workspace.id
+      });
+      setMonitorGroups([...monitorGroups, res.data]);
+      setShowGroupModal(false);
+      setNewGroup({ name: '', color: '#f97316' });
+      toast.success('Group created successfully');
+    } catch (error) {
+      console.error('Error adding group:', error);
+      toast.error('Failed to create group');
+    }
+  };
+
+  const handleUpdateGroup = async (id: string, updates: any) => {
+    try {
+      const res = await api.put(`/monitor-groups/${id}`, updates);
+      setMonitorGroups(prev => prev.map(g => g.id === id ? res.data : g));
+      if (updates.name) {
+        toast.success('Group renamed');
+      }
+    } catch (error) {
+      console.error('Error updating group:', error);
+      toast.error('Failed to update group');
+    }
+  };
+
+  const handleDeleteGroup = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this group? The monitors inside will NOT be deleted, they will just be ungrouped.')) {
+      try {
+        await api.delete(`/monitor-groups/${id}`);
+        setMonitorGroups(prev => prev.filter(g => g.id !== id));
+        setMonitors(prev => prev.map(m => m.groupId === id ? { ...m, groupId: null } : m));
+        toast.success('Group deleted');
+      } catch (error) {
+        toast.error('Failed to delete group');
+      }
+    }
+  };
+
+  const moveMonitorToGroup = async (monitorId: string, groupId: string | null) => {
+    try {
+      const res = await api.put(`/monitors/${monitorId}`, { groupId });
+      setMonitors(prev => prev.map(m => m.id === monitorId ? res.data : m));
+      toast.success(`Monitor moved`);
+      setGroupDropdownOpen(null);
+    } catch (error) {
+      toast.error('Failed to move monitor');
+    }
+  };
+
+  const moveSelectedMonitorsToGroup = async (groupId: string | null) => {
+    if (selectedMonitors.length === 0) return;
+    try {
+      await Promise.all(selectedMonitors.map(id => api.put(`/monitors/${id}`, { groupId })));
+      setMonitors(prev => prev.map(m => selectedMonitors.includes(m.id) ? { ...m, groupId } : m));
+      toast.success(`${selectedMonitors.length} monitors moved`);
+      setSelectedMonitors([]);
+    } catch (error) {
+      toast.error('Failed to move monitors');
     }
   };
 
@@ -244,17 +443,30 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
           </motion.p>
         </div>
         
-        <motion.button 
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => setShowAddModal(true)}
-          className="bg-white text-zinc-950 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all shadow-xl shadow-white/5"
-        >
-          <Plus className="w-5 h-5" />
-          {t('dashboard.add_monitor')}
-        </motion.button>
+        <div className="flex gap-2">
+          <motion.button 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setShowGroupModal(true)}
+            className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all hover:bg-zinc-800"
+          >
+            <FolderPlus className="w-5 h-5" />
+            <span className="hidden sm:inline">New Group</span>
+          </motion.button>
+          <motion.button 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setShowAddModal(true)}
+            className="bg-white text-zinc-950 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all shadow-xl shadow-white/5"
+          >
+            <Plus className="w-5 h-5" />
+            {t('dashboard.add_monitor')}
+          </motion.button>
+        </div>
       </header>
 
       {/* Stats Grid */}
@@ -345,128 +557,172 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
             <button className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors">
               <Filter className="w-4 h-4" />
             </button>
+            <button 
+              onClick={() => setGroupDropdownOpen(groupDropdownOpen === 'bulk' ? null : 'bulk')}
+              className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors flex items-center gap-2 relative"
+            >
+              <FolderOpen className="w-4 h-4" />
+              {groupDropdownOpen === 'bulk' && (
+                <div className="absolute top-full right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl z-50 py-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="px-3 py-2 text-xs font-bold text-zinc-500 uppercase tracking-wider border-b border-zinc-800">Move to</div>
+                  <button
+                    onClick={() => { moveSelectedMonitorsToGroup(null); setGroupDropdownOpen(null); }}
+                    className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors flex items-center gap-2"
+                  >
+                    <Folder className="w-4 h-4 text-zinc-500" />
+                    Ungrouped
+                  </button>
+                  {monitorGroups.map(g => (
+                    <button
+                      key={g.id}
+                      onClick={() => { moveSelectedMonitorsToGroup(g.id); setGroupDropdownOpen(null); }}
+                      className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors flex items-center gap-2"
+                    >
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: g.color }} />
+                      {g.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </button>
             <div className="h-8 w-[1px] bg-zinc-800 mx-2" />
             <span className="text-xs text-zinc-500 font-medium">{filteredMonitors.length} results</span>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3">
-          <AnimatePresence mode="popLayout">
-            {filteredMonitors.map((monitor, i) => (
-              <motion.div 
-                key={monitor.id}
-                layout
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ delay: i * 0.05 }}
-                className={`group glass p-4 rounded-2xl transition-all card-gradient cursor-pointer ${
-                  selectedMonitors.includes(monitor.id) ? 'border-orange-500/50 bg-orange-500/[0.02]' : 'hover:border-zinc-700'
-                }`}
-                onClick={(e) => {
-                  if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('a')) {
-                    return;
-                  }
-                  toggleSelectMonitor(monitor.id);
-                }}
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 flex-1 min-w-0">
-                    <div className="flex items-center justify-center w-6 h-6">
-                      {selectedMonitors.includes(monitor.id) ? (
-                        <CheckSquare className="w-5 h-5 text-orange-500" />
-                      ) : (
-                        <Square className="w-5 h-5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
-                      )}
-                    </div>
-                    <div className="relative">
-                      <div className={`w-3 h-3 rounded-full ${
-                        monitor.status === 'paused' ? 'bg-zinc-600' : 
-                        monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
-                        monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
-                      }`} />
-                      {monitor.status !== 'paused' && (
-                        <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${
-                          monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
-                          monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
-                        }`} />
-                      )}
-                    </div>
+        <div className="space-y-6">
+          {/* Render Groups */}
+          {monitorGroups.map(group => {
+            const groupMonitors = filteredMonitors.filter(m => m.groupId === group.id);
+            if (groupMonitors.length === 0 && searchQuery) return null;
+
+            return (
+              <div key={group.id} className="bg-zinc-900/50 border border-zinc-800/50 rounded-3xl overflow-hidden">
+                <div 
+                  className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-zinc-800/30 transition-colors"
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) return;
+                    handleUpdateGroup(group.id, { collapsed: !group.collapsed });
+                  }}
+                >
+                  <div className="flex items-center gap-4">
+                    <button className="text-zinc-500 hover:text-zinc-300 transition-colors">
+                      {group.collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </button>
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: group.color }} />
                     
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-3 mb-1">
-                        <Link to={`/monitor/${monitor.id}`} className="font-bold text-zinc-100 hover:text-orange-500 transition-colors truncate font-display text-lg">
-                          {monitor.name}
-                        </Link>
-                        <div className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                          monitor.status === 'paused' ? 'bg-zinc-800 text-zinc-500' : 
-                          monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 
-                          monitor.currentStatus === 'degraded' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' : 
-                          'bg-red-500/10 text-red-500 border border-red-500/20'
-                        }`}>
-                          {monitor.status === 'paused' ? t('dashboard.paused') : monitor.currentStatus === 'up' ? t('dashboard.operational') : monitor.currentStatus === 'degraded' ? t('dashboard.degraded') : t('dashboard.down')}
-                        </div>
-                        {monitor.monitorType === 'HTTP' && monitor.sslLastChecked && (
-                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                            monitor.sslDaysLeft !== null && monitor.sslDaysLeft <= 0 ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                            !monitor.sslValid ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                            monitor.sslDaysLeft <= 7 ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                            monitor.sslDaysLeft <= 30 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
-                            'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          }`} title="SSL Certificate">
-                            <Lock className="w-2.5 h-2.5" />
-                            {monitor.sslDaysLeft !== null && monitor.sslDaysLeft <= 0 ? 'EXP' : monitor.sslValid ? (monitor.sslDaysLeft + 'd') : 'ERR'}
-                          </div>
-                        )}
-                        <a href={monitor.url} target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-zinc-400">
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </div>
-                      <div className="flex items-center gap-3 text-[11px] text-zinc-500 font-medium">
-                        <span className="truncate max-w-[250px] font-mono">{monitor.url}</span>
-                        <span className="text-zinc-800">•</span>
-                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {monitor.interval}s</span>
-                      </div>
-                    </div>
+                    {editingGroupId === group.id ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={editingGroupName}
+                        onChange={e => setEditingGroupName(e.target.value)}
+                        onBlur={() => {
+                          if (editingGroupName.trim() && editingGroupName !== group.name) {
+                            handleUpdateGroup(group.id, { name: editingGroupName.trim() });
+                          }
+                          setEditingGroupId(null);
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            if (editingGroupName.trim() && editingGroupName !== group.name) {
+                              handleUpdateGroup(group.id, { name: editingGroupName.trim() });
+                            }
+                            setEditingGroupId(null);
+                          }
+                          if (e.key === 'Escape') setEditingGroupId(null);
+                        }}
+                        className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-orange-500"
+                        onClick={e => e.stopPropagation()}
+                      />
+                    ) : (
+                      <h3 
+                        className="text-lg font-bold text-white font-display onDoubleClick"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setEditingGroupId(group.id);
+                          setEditingGroupName(group.name);
+                        }}
+                      >
+                        {group.name}
+                      </h3>
+                    )}
+                    <span className="text-xs font-bold text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">{groupMonitors.length}</span>
                   </div>
 
-                  <div className="flex items-center gap-6">
-                    <MiniAvailabilityHistory monitorId={monitor.id} />
-                    <div className="hidden lg:flex flex-col items-end">
-                      <span className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mb-1">Last Check</span>
-                      <span className="text-[11px] font-medium text-zinc-400">
-                        {monitor.lastChecked ? formatDistanceToNow(new Date(monitor.lastChecked), { addSuffix: true }) : 'Never'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <button 
-                        onClick={(e) => toggleStatus(monitor, e)}
-                        className={`p-2.5 rounded-xl transition-colors ${
-                          monitor.status === 'paused' 
-                            ? 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700' 
-                            : 'hover:bg-zinc-800 text-zinc-500 hover:text-zinc-100'
-                        }`}
-                        title={monitor.status === 'paused' ? 'Resume' : 'Pause'}
-                      >
-                        {monitor.status === 'paused' ? <Play className="w-4 h-4 fill-current" /> : <Pause className="w-4 h-4 fill-current" />}
-                      </button>
-                      <button 
-                        onClick={() => deleteMonitor(monitor.id)}
-                        className="p-2.5 hover:bg-red-500/10 rounded-xl text-zinc-500 hover:text-red-500 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                      <Link to={`/monitor/${monitor.id}`} className="p-2.5 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-zinc-100 transition-colors">
-                        <ArrowUpRight className="w-5 h-5" />
-                      </Link>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group.id); }}
+                      className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
+                      title="Delete Group"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+
+                <AnimatePresence>
+                  {!group.collapsed && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="p-4 pt-0 grid grid-cols-1 gap-3">
+                        {groupMonitors.map((monitor, i) => (
+                          <MonitorCard 
+                            key={monitor.id} 
+                            monitor={monitor} 
+                            selectedMonitors={selectedMonitors}
+                            toggleSelectMonitor={toggleSelectMonitor}
+                            toggleStatus={toggleStatus}
+                            deleteMonitor={deleteMonitor}
+                          />
+                        ))}
+                        {groupMonitors.length === 0 && (
+                          <div className="text-center py-8 text-zinc-500 text-sm border-2 border-dashed border-zinc-800 rounded-2xl mx-2 mb-2">
+                            No monitors in this group
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
+
+          {/* Ungrouped Monitors */}
+          {(() => {
+            const ungroupedMonitors = filteredMonitors.filter(m => !m.groupId);
+            if (ungroupedMonitors.length === 0) return null;
+
+            return (
+              <div className="bg-zinc-900/30 border border-zinc-800/30 rounded-3xl overflow-hidden">
+                <div className="px-6 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <Folder className="w-5 h-5 text-zinc-500" />
+                    <h3 className="text-lg font-bold text-zinc-300 font-display">Ungrouped</h3>
+                    <span className="text-xs font-bold text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">{ungroupedMonitors.length}</span>
+                  </div>
+                </div>
+                <div className="p-4 pt-0 grid grid-cols-1 gap-3">
+                  {ungroupedMonitors.map((monitor, i) => (
+                    <MonitorCard 
+                      key={monitor.id} 
+                      monitor={monitor} 
+                      selectedMonitors={selectedMonitors}
+                      toggleSelectMonitor={toggleSelectMonitor}
+                      toggleStatus={toggleStatus}
+                      deleteMonitor={deleteMonitor}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           
           {filteredMonitors.length === 0 && !loading && (
             <motion.div 
@@ -513,6 +769,19 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                       value={newMonitor.name}
                       onChange={e => setNewMonitor({...newMonitor, name: e.target.value})}
                     />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Group</label>
+                    <select 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm appearance-none"
+                      value={newMonitor.groupId || ''}
+                      onChange={e => setNewMonitor({...newMonitor, groupId: e.target.value})}
+                    >
+                      <option value="">None (Ungrouped)</option>
+                      {monitorGroups.map(g => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{t('dashboard.monitor_type')}</label>
@@ -637,6 +906,73 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                     className="flex-1 bg-white text-zinc-950 px-6 py-4 rounded-2xl font-bold transition-all shadow-xl shadow-white/5 text-sm"
                   >
                     {t('dashboard.create_monitor')}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Group Modal */}
+      <AnimatePresence>
+        {showGroupModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowGroupModal(false)}
+              className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-[2.5rem] p-10 shadow-2xl relative z-10"
+            >
+              <h2 className="text-3xl font-bold mb-8 font-display">New Group</h2>
+              
+              <form onSubmit={handleAddGroup} className="space-y-6">
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Group Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. Production Services"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
+                    value={newGroup.name}
+                    onChange={e => setNewGroup({...newGroup, name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Color</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {['#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#eab308'].map(color => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setNewGroup({...newGroup, color})}
+                        className={`w-10 h-10 rounded-full border-2 transition-transform ${newGroup.color === color ? 'scale-110 border-white' : 'border-transparent hover:scale-105'}`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    type="button"
+                    onClick={() => setShowGroupModal(false)}
+                    className="flex-1 px-6 py-4 rounded-2xl font-bold border border-zinc-800 hover:bg-zinc-800 transition-colors text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    className="flex-1 bg-white text-zinc-950 px-6 py-4 rounded-2xl font-bold transition-all shadow-xl shadow-white/5 text-sm"
+                  >
+                    Create
                   </button>
                 </div>
               </form>
