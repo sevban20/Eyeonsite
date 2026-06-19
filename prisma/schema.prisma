@@ -7,12 +7,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum SystemRole {
+  USER
+  SYSTEM_ADMIN
+}
+
 model User {
   id                   String    @id @default(uuid())
   email                String    @unique
   password             String?   // Optional for OAuth users
   name                 String?
   createdAt            DateTime  @default(now())
+
+  // Admin & Billing
+  role                 SystemRole @default(USER)
+  isBlocked            Boolean   @default(false)
+  subscriptionPlan     String    @default("FREE")
+  subscriptionExpires  DateTime?
 
   // Email verification
   emailVerified        Boolean   @default(false)

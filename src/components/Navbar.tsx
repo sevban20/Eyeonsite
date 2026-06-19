@@ -28,6 +28,10 @@ export default function Navbar({ user, workspace }: NavbarProps) {
     { name: t('nav.settings'), path: '/settings', icon: Settings },
   ];
 
+  if (user?.role === 'SYSTEM_ADMIN') {
+    navItems.push({ name: 'Admin', path: '/admin', icon: Shield });
+  }
+
   return (
     <nav className="fixed top-0 left-0 right-0 h-20 glass z-[100] px-8 flex items-center justify-between border-b border-zinc-800/50">
       <div className="flex items-center gap-12">

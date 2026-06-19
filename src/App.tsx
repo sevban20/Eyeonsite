@@ -21,6 +21,7 @@ import { Loader2, AlertTriangle, Activity } from 'lucide-react';
 import { Toaster } from 'sonner';
 import StatusPage from './components/StatusPage';
 import StatusPagesList from './components/StatusPagesList';
+import AdminDashboard from './components/Admin/AdminDashboard';
 import api from './lib/api';
 
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
@@ -41,6 +42,31 @@ const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
   }
   
   return user ? <>{children}</> : <Navigate to="/auth" />;
+};
+
+const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user, loading } = useAuth();
+  const { t } = useTranslation();
+  if (loading) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-zinc-950 text-white">
+        <div className="relative">
+          <div className="w-16 h-16 border-4 border-orange-500/20 border-t-orange-500 rounded-full animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Activity className="w-6 h-6 text-orange-500 animate-pulse" />
+          </div>
+        </div>
+        <p className="mt-6 text-zinc-400 font-medium tracking-wide uppercase text-[10px]">{t('common.initializing')}</p>
+      </div>
+    );
+  }
+  
+  // @ts-ignore - Ensure user has role field, default to USER if not defined in type
+  if (!user || user.role !== 'SYSTEM_ADMIN') {
+    return <Navigate to="/dashboard" />;
+  }
+  
+  return <>{children}</>;
 };
 
 const AppContent = () => {
@@ -115,6 +141,11 @@ const AppContent = () => {
                   <PrivateRoute>
                     <Settings user={user} workspace={workspace} />
                   </PrivateRoute>
+                } />
+                <Route path="/admin" element={
+                  <AdminRoute>
+                    <AdminDashboard />
+                  </AdminRoute>
                 } />
               </Routes>
             </main>

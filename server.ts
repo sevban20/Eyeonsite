@@ -202,6 +202,19 @@ async function startServer() {
     });
   };
 
+  // Admin Middleware
+  const requireAdmin = async (req: any, res: any, next: any) => {
+    try {
+      const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (!user || user.role !== 'SYSTEM_ADMIN') {
+        return res.status(403).json({ error: 'Forbidden: Admin access required' });
+      }
+      next();
+    } catch (error) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+
   // --- AUTH HELPERS ---
   const MAX_LOGIN_ATTEMPTS = 5;
   const LOCK_DURATION_MINUTES = 30;
@@ -572,6 +585,11 @@ async function startServer() {
         return res.status(400).json({ error: 'Invalid email or password' });
       }
 
+      // Check if user is blocked
+      if (user.isBlocked) {
+        return res.status(403).json({ error: 'Your account has been blocked by an administrator.' });
+      }
+
       // Check account lock
       if (user.lockUntil && user.lockUntil > new Date()) {
         const minutesLeft = Math.ceil((user.lockUntil.getTime() - Date.now()) / 60000);
@@ -636,7 +654,102 @@ async function startServer() {
     try {
       const user = await prisma.user.findUnique({ where: { id: req.user.id } });
       if (!user) return res.sendStatus(404);
-      res.json({ id: user.id, email: user.email, name: user.name });
+      res.json({ id: user.id, email: user.email, name: user.name, role: user.role, plan: user.subscriptionPlan, isBlocked: user.isBlocked });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- ADMIN ROUTES ---
+  app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const [totalUsers, totalMonitors, activeMonitors, totalWorkspaces] = await Promise.all([
+        prisma.user.count(),
+        prisma.monitor.count(),
+        prisma.monitor.count({ where: { status: 'up' } }),
+        prisma.workspace.count()
+      ]);
+      res.json({ totalUsers, totalMonitors, activeMonitors, totalWorkspaces });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/users', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const users = await prisma.user.findMany({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          createdAt: true,
+          role: true,
+          isBlocked: true,
+          subscriptionPlan: true,
+          subscriptionExpires: true,
+          _count: {
+            select: { workspaces: true }
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+      res.json(users);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/users/:id/block', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const { isBlocked } = req.body;
+      const user = await prisma.user.update({
+        where: { id: req.params.id },
+        data: { isBlocked }
+      });
+      res.json({ id: user.id, isBlocked: user.isBlocked });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/users/:id/subscription', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const { plan, expiresAt } = req.body;
+      const user = await prisma.user.update({
+        where: { id: req.params.id },
+        data: { 
+          subscriptionPlan: plan, 
+          subscriptionExpires: expiresAt ? new Date(expiresAt) : null 
+        }
+      });
+      res.json({ id: user.id, subscriptionPlan: user.subscriptionPlan, subscriptionExpires: user.subscriptionExpires });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/users/:id/role', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const { role } = req.body;
+      // Prevent an admin from removing their own admin status accidentally
+      if (req.user.id === req.params.id && role !== 'SYSTEM_ADMIN') {
+        return res.status(400).json({ error: 'You cannot remove your own admin privileges.' });
+      }
+
+      const user = await prisma.user.update({
+        where: { id: req.params.id },
+        data: { role }
+      });
+      res.json({ id: user.id, role: user.role });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/logs', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      // In a real app, read from a file or DB. Here we return the debug log buffer.
+      res.json({ logs: debugLogs });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
