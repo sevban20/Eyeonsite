@@ -5,7 +5,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: always
     environment:
       - UV_THREADPOOL_SIZE=128
@@ -34,6 +35,12 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-uptimemonitor}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
 
   # Faz 1.6: automatic, retention-pruned PostgreSQL backups. Dumps land in the
   # `db_backups` volume — mount or sync that path (e.g. with restic/rclone) to
@@ -41,7 +48,8 @@ services:
   backup:
     image: postgres:15-alpine
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       - DB_USER=${DB_USER:-postgres}
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
