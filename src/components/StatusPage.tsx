@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../lib/api';
-import { socket } from '../lib/socket';
+import { socket, connectSocket } from '../lib/socket';
 import { Activity, CheckCircle2, XCircle, Globe, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from '../lib/i18n';
@@ -30,33 +30,29 @@ export default function StatusPage() {
 
     fetchStatusPage();
 
-    const handleMonitorUpdated = (updatedMonitor: any) => {
-      if (statusPage && updatedMonitor.workspaceId === statusPage.workspaceId) {
-        setMonitors(prev => {
-          if (prev.some(m => m.id === updatedMonitor.id)) {
-            return prev.map(m => m.id === updatedMonitor.id ? {
-              ...updatedMonitor,
-              history: m.history,
-              avgUptime: m.avgUptime
-            } : m);
-          }
-          return prev;
-        });
-      }
+    // Public pages receive the sanitized 'monitor-status' event (id + status fields only)
+    const handleMonitorStatus = (update: any) => {
+      setMonitors(prev => prev.map(m => m.id === update.id ? {
+        ...m,
+        status: update.status,
+        currentStatus: update.currentStatus,
+        lastChecked: update.lastChecked
+      } : m));
     };
 
     const handleMonitorDeleted = (deletedMonitorId: string) => {
       setMonitors(prev => prev.filter(m => m.id !== deletedMonitorId));
     };
 
-    socket.on('monitor-updated', handleMonitorUpdated);
+    connectSocket();
+    socket.on('monitor-status', handleMonitorStatus);
     socket.on('monitor-deleted', handleMonitorDeleted);
 
     return () => {
-      socket.off('monitor-updated', handleMonitorUpdated);
+      socket.off('monitor-status', handleMonitorStatus);
       socket.off('monitor-deleted', handleMonitorDeleted);
     };
-  }, [slug, statusPage?.workspaceId]);
+  }, [slug]);
 
   if (loading) {
     return (

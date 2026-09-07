@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Activity, Mail, Lock, User, ArrowRight, Chrome, Github, MailCheck, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Activity, Mail, Lock, User, ArrowRight, Chrome, Github, MailCheck, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../lib/auth';
 import api from '../lib/api';
 import { useTranslation } from '../lib/i18n';
 
-type AuthView = 'login' | 'register' | 'verify_sent' | 'unverified' | 'forgot_password';
+type AuthView = 'login' | 'register' | 'verify_sent' | 'unverified' | 'forgot_password' | 'twofa';
 
 export default function Auth() {
   const [view, setView] = useState<AuthView>('login');
@@ -18,6 +18,8 @@ export default function Auth() {
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSent, setResendSent] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [preAuthToken, setPreAuthToken] = useState('');
+  const [twoFaCode, setTwoFaCode] = useState('');
   const { login } = useAuth();
   const { t } = useTranslation();
 
@@ -29,7 +31,12 @@ export default function Auth() {
     try {
       if (view === 'login') {
         const res = await api.post('/auth/login', { email, password });
-        login(res.data.token, res.data.user);
+        if (res.data.twoFactorRequired) {
+          setPreAuthToken(res.data.preAuthToken);
+          setView('twofa');
+        } else {
+          login(res.data.token, res.data.user);
+        }
       } else if (view === 'register') {
         const res = await api.post('/auth/register', { email, password, name });
         setView('verify_sent');
@@ -50,6 +57,20 @@ export default function Auth() {
     }
   };
 
+  const handleVerify2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const res = await api.post('/auth/2fa/verify', { preAuthToken, token: twoFaCode });
+      login(res.data.token, res.data.user);
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleResendVerification = async (emailToResend: string) => {
     setResendLoading(true);
     setResendSent(false);
@@ -63,6 +84,58 @@ export default function Auth() {
       setResendLoading(false);
     }
   };
+
+  // ── Two-factor code view ────────────────────────────────────────────────────
+  if (view === 'twofa') {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-zinc-950 relative overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-emerald-500/5 blur-[120px] rounded-full -z-10" />
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-emerald-500 text-white mb-8 shadow-2xl shadow-emerald-500/20">
+              <ShieldCheck className="w-10 h-10" />
+            </div>
+            <h1 className="text-3xl font-black mb-3 font-display text-white tracking-tight">{t('auth.twofa_title')}</h1>
+            <p className="text-zinc-500 font-medium">{t('auth.twofa_subtitle')}</p>
+          </div>
+          <div className="glass rounded-[2.5rem] p-10 shadow-2xl card-gradient">
+            <form onSubmit={handleVerify2FA} className="space-y-4">
+              {error && (
+                <div className="mb-4 p-4 border rounded-2xl text-xs font-bold uppercase tracking-wider text-center bg-red-500/10 border-red-500/20 text-red-500">
+                  {error}
+                </div>
+              )}
+              <input
+                type="text"
+                inputMode="numeric"
+                required
+                autoFocus
+                placeholder={t('auth.twofa_code_placeholder')}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-emerald-500 transition-colors text-lg font-bold text-white text-center tracking-[0.3em]"
+                value={twoFaCode}
+                onChange={e => setTwoFaCode(e.target.value.replace(/\s/g, ''))}
+              />
+              <button
+                type="submit"
+                disabled={loading || !twoFaCode}
+                className="w-full bg-white text-zinc-950 py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl shadow-white/5 disabled:opacity-50"
+              >
+                {loading ? t('common.processing') : t('auth.twofa_verify')}
+                <ArrowRight className="w-6 h-6" />
+              </button>
+              <button
+                type="button"
+                onClick={() => { setView('login'); setTwoFaCode(''); setError(''); }}
+                className="w-full text-zinc-600 hover:text-zinc-400 text-sm font-medium py-2 transition-colors"
+              >
+                ← {t('auth.back_to_login')}
+              </button>
+            </form>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   // ── Verification sent view ──────────────────────────────────────────────────
   if (view === 'verify_sent') {

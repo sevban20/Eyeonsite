@@ -7,9 +7,6 @@ import axios from 'axios';
 import { Server } from 'socket.io';
 import http from 'http';
 import https from 'https';
-import tls from 'tls';
-import dns from 'dns';
-import net from 'net';
 import ping from 'ping';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
@@ -20,6 +17,18 @@ import { randomBytes } from 'crypto';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
+import { isPrivateIp, resolveTargetIp } from './lib/security';
+import { checkSSL, checkDNS, checkTCP } from './lib/network-checks';
+import {
+  monitorCreateSchema, monitorUpdateSchema,
+  statusPageCreateSchema, statusPageUpdateSchema,
+  maintenanceWindowCreateSchema, userUpdateSchema,
+  monitorGroupCreateSchema, monitorGroupUpdateSchema,
+  apiKeyCreateSchema, totpVerifySchema
+} from './lib/validation';
+import { generateApiKey, hashApiKey, looksLikeApiKey } from './lib/apikeys';
+import { generateTotpSecret, totpKeyUri, totpQrCodeDataUrl, verifyTotpToken, generateRecoveryCodes } from './lib/totp';
+import { makeAuditLogger, requestIp } from './lib/audit';
 
 dotenv.config();
 
@@ -27,7 +36,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const prisma = new PrismaClient();
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
+
+// JWT secret: hard-fail in production, ephemeral secret in development
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('FATAL: JWT_SECRET must be set in production. Generate one with: openssl rand -base64 64');
+    process.exit(1);
+  }
+  console.warn('WARN: JWT_SECRET not set — using an ephemeral development secret (sessions reset on restart).');
+  return randomBytes(48).toString('hex');
+})();
+
+// Block monitoring of private/internal targets (SSRF protection). Opt-out via env for self-hosted internal use.
+const ALLOW_PRIVATE_TARGETS = process.env.ALLOW_PRIVATE_TARGETS === 'true';
 
 // Debug Log Buffer
 const debugLogs: string[] = [];
@@ -39,147 +60,39 @@ function log(msg: string) {
   if (debugLogs.length > 100) debugLogs.shift();
 }
 
-// --- INPUT VALIDATION SCHEMAS ---
-const monitorCreateSchema = z.object({
-  name: z.string().min(1).max(100),
-  url: z.string().min(1),
-  method: z.enum(['GET', 'POST', 'HEAD', 'PUT', 'DELETE']).default('GET'),
-  interval: z.number().int().min(10).max(86400).default(60),
-  workspaceId: z.string().uuid(),
-  alertEmail: z.string().email().optional().or(z.literal('')),
-  slackWebhook: z.string().url().optional().or(z.literal('')),
-  telegramChatId: z.string().optional(),
-  zoomWebhook: z.string().url().optional().or(z.literal('')),
-  discordWebhook: z.string().url().optional().or(z.literal('')),
-  teamsWebhook: z.string().url().optional().or(z.literal('')),
-  genericWebhook: z.string().url().optional().or(z.literal('')),
-  alertThreshold: z.number().int().min(1).max(10).default(2),
-  responseTimeThreshold: z.number().int().min(100).max(60000).optional().nullable(),
-  notifyOnDegraded: z.boolean().default(false),
-  sslCheckEnabled: z.boolean().default(true),
-  status: z.string().optional(),
-  currentStatus: z.string().optional(),
-  monitorType: z.string().default('HTTP'),
-  port: z.number().int().optional().nullable(),
-  expectedKeyword: z.string().optional().nullable(),
-  customHeaders: z.string().optional().nullable(),
-  heartbeatGrace: z.number().int().default(5),
-  groupId: z.string().uuid().optional().nullable()
-});
-
-const monitorUpdateSchema = monitorCreateSchema.partial();
-
-const monitorGroupCreateSchema = z.object({
-  name: z.string().min(1).max(100),
-  color: z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i).default('#f97316'),
-  workspaceId: z.string().uuid()
-});
-
-const monitorGroupUpdateSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  color: z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i).optional(),
-  collapsed: z.boolean().optional(),
-  order: z.number().int().optional()
-});
-
-// --- SSL CHECK FUNCTION ---
-async function checkSSL(url: string): Promise<{
-  valid: boolean;
-  expiry: Date | null;
-  issuer: string | null;
-  subject: string | null;
-  daysLeft: number | null;
-}> {
-  return new Promise((resolve) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== 'https:') {
-        return resolve({ valid: false, expiry: null, issuer: null, subject: null, daysLeft: null });
-      }
-      const port = parseInt(parsed.port) || 443;
-      const hostname = parsed.hostname;
-      const socket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false }, () => {
-        try {
-          const cert = socket.getPeerCertificate(true);
-          socket.end();
-          if (!cert || !cert.valid_to) {
-            return resolve({ valid: false, expiry: null, issuer: null, subject: null, daysLeft: null });
-          }
-          const expiry = new Date(cert.valid_to);
-          const now = new Date();
-          const daysLeft = Math.floor((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-          const rawIssuer = cert.issuer ? (cert.issuer.O || cert.issuer.CN || null) : null;
-          const issuer = rawIssuer ? (Array.isArray(rawIssuer) ? rawIssuer[0] : rawIssuer) : null;
-          const rawSubject = cert.subject ? (cert.subject.CN || null) : null;
-          const subject = rawSubject ? (Array.isArray(rawSubject) ? rawSubject[0] : rawSubject) : null;
-          const valid = socket.authorized || daysLeft > 0;
-          resolve({ valid, expiry, issuer: issuer as string | null, subject: subject as string | null, daysLeft });
-        } catch {
-          socket.end();
-          resolve({ valid: false, expiry: null, issuer: null, subject: null, daysLeft: null });
-        }
-      });
-      socket.on('error', () => resolve({ valid: false, expiry: null, issuer: null, subject: null, daysLeft: null }));
-      socket.setTimeout(8000, () => { socket.destroy(); resolve({ valid: false, expiry: null, issuer: null, subject: null, daysLeft: null }); });
-    } catch {
-      resolve({ valid: false, expiry: null, issuer: null, subject: null, daysLeft: null });
-    }
-  });
+// Generic 500 handler: log details server-side, never leak internals to clients
+function serverError(res: any, error: any) {
+  log(`ERROR: ${error?.message || error}`);
+  if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
 }
 
-// --- DNS CHECK FUNCTION ---
-async function checkDNS(url: string): Promise<{ resolvedIp: string | null; resolutionTime: number }> {
-  return new Promise((resolve) => {
-    try {
-      const hostname = new URL(url).hostname;
-      const start = Date.now();
-      dns.lookup(hostname, (err, address) => {
-        const resolutionTime = Date.now() - start;
-        if (err) return resolve({ resolvedIp: null, resolutionTime });
-        resolve({ resolvedIp: address, resolutionTime });
-      });
-    } catch {
-      resolve({ resolvedIp: null, resolutionTime: 0 });
-    }
-  });
-}
-
-// --- TCP CHECK FUNCTION ---
-async function checkTCP(host: string, port: number, timeoutMs = 10000): Promise<{ responseTime: number }> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const socket = new net.Socket();
-    socket.setTimeout(timeoutMs);
-    socket.on('connect', () => {
-      const responseTime = Date.now() - start;
-      socket.destroy();
-      resolve({ responseTime });
-    });
-    socket.on('timeout', () => {
-      socket.destroy();
-      reject(new Error(`TCP timeout after ${timeoutMs}ms`));
-    });
-    socket.on('error', (err) => {
-      socket.destroy();
-      reject(err);
-    });
-    socket.connect(port, host);
-  });
-}
+// Fire-and-forget-safe audit trail writer (see lib/audit.ts / AuditLog model)
+const logAudit = makeAuditLogger(prisma, log);
 
 async function startServer() {
   log('DEBUG: ENTERING startServer()');
   const app = express();
   app.set('trust proxy', 1); // Trust Nginx/Apache proxy
   const PORT = parseInt(process.env.PORT || '3000');
-  const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
+  // In production, fall back to APP_URL instead of '*' (frontend is served from the same origin)
+  const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN
+    || (process.env.NODE_ENV === 'production' && process.env.APP_URL ? process.env.APP_URL : '*');
+  if (ALLOWED_ORIGIN === '*' && process.env.NODE_ENV === 'production') {
+    log('WARN: CORS is open to all origins. Set ALLOWED_ORIGIN (or APP_URL) in production.');
+  }
 
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors({ origin: ALLOWED_ORIGIN }));
   app.use(express.json({ limit: '1mb' }));
 
   // Rate limiting
-  const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.originalUrl.startsWith('/api/heartbeat/') // heartbeats ping frequently by design
+  });
   app.use('/api/', limiter);
   const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20 });
   app.use('/api/auth/', authLimiter);
@@ -189,11 +102,26 @@ async function startServer() {
     cors: { origin: ALLOWED_ORIGIN }
   });
 
-  // Auth Middleware
-  const authenticateToken = (req: any, res: any, next: any) => {
+  // Auth Middleware — accepts either a JWT (web app session) or an API key
+  // (Bearer umk_...; see Faz 1.5 / /api/api-keys). Both end up setting
+  // req.user.id, so every existing route's workspace-access checks apply
+  // unchanged regardless of which credential was used.
+  const authenticateToken = async (req: any, res: any, next: any) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
     if (token == null) return res.sendStatus(401);
+
+    if (looksLikeApiKey(token)) {
+      try {
+        const key = await prisma.apiKey.findUnique({ where: { keyHash: hashApiKey(token) } });
+        if (!key) return res.sendStatus(403);
+        prisma.apiKey.update({ where: { id: key.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
+        req.user = { id: key.userId, apiKeyId: key.id };
+        return next();
+      } catch {
+        return res.sendStatus(403);
+      }
+    }
 
     jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
       if (err) return res.sendStatus(403);
@@ -423,6 +351,7 @@ async function startServer() {
         });
 
         sendPasswordResetEmail(email, token, user.name).catch(e => log(`DEBUG: Reset email error: ${e.message}`));
+        await logAudit({ userId: user.id, action: 'auth.password_reset.requested', ip: requestIp(req) });
       }
 
       // Always return success for security
@@ -437,7 +366,9 @@ async function startServer() {
     try {
       const { token, password } = req.body;
       if (!token || !password) return res.status(400).json({ error: 'Token and password required' });
-      if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+      if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
+        return res.status(400).json({ error: 'Password must be 8-128 characters' });
+      }
 
       const user = await prisma.user.findFirst({
         where: {
@@ -460,6 +391,7 @@ async function startServer() {
         }
       });
 
+      await logAudit({ userId: user.id, action: 'auth.password_reset.completed', ip: requestIp(req) });
       res.json({ message: 'Password reset successful' });
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to reset password' });
@@ -471,7 +403,13 @@ async function startServer() {
     try {
       const { email, password, name } = req.body;
       if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-      if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+      if (!z.string().email().safeParse(email).success) return res.status(400).json({ error: 'Invalid email address' });
+      if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
+        return res.status(400).json({ error: 'Password must be 8-128 characters' });
+      }
+      if (name !== undefined && (typeof name !== 'string' || name.length > 100)) {
+        return res.status(400).json({ error: 'Invalid name' });
+      }
 
       const existingUser = await prisma.user.findUnique({ where: { email } });
       if (existingUser) return res.status(400).json({ error: 'Email already exists' });
@@ -499,6 +437,7 @@ async function startServer() {
       // Send verification email (non-blocking)
       sendVerificationEmail(email, token, name).catch(e => log(`DEBUG: Email error: ${e.message}`));
 
+      await logAudit({ userId: user.id, action: 'auth.register', ip: requestIp(req) });
       res.status(201).json({ message: 'Registration successful. Please check your email to verify your account.', email });
     } catch (error: any) {
       log(`DEBUG: Register error: ${error.message}`);
@@ -616,11 +555,13 @@ async function startServer() {
         });
 
         if (shouldLock) {
+          await logAudit({ userId: user.id, action: 'auth.login.locked', ip: requestIp(req) });
           return res.status(429).json({
             error: `Too many failed attempts. Account locked for ${LOCK_DURATION_MINUTES} minutes.`
           });
         }
 
+        await logAudit({ userId: user.id, action: 'auth.login.failed', ip: requestIp(req) });
         const remaining = MAX_LOGIN_ATTEMPTS - newAttempts;
         return res.status(400).json({
           error: `Invalid email or password. ${remaining} attempt(s) remaining before lockout.`
@@ -642,7 +583,15 @@ async function startServer() {
         data: { loginAttempts: 0, lockUntil: null }
       });
 
+      // 2FA (Faz 1.4): hand back a short-lived pre-auth token instead of the
+      // real session token; the client exchanges it via /api/auth/2fa/verify.
+      if (user.twoFactorEnabled) {
+        const preAuthToken = jwt.sign({ id: user.id, purpose: '2fa-pending' }, JWT_SECRET, { expiresIn: '5m' });
+        return res.json({ twoFactorRequired: true, preAuthToken });
+      }
+
       const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+      await logAudit({ userId: user.id, action: 'auth.login', ip: requestIp(req) });
       res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
     } catch (error: any) {
       log(`DEBUG: Login error: ${error.message}`);
@@ -650,13 +599,201 @@ async function startServer() {
     }
   });
 
+  // Complete login when the account has 2FA enabled: exchange the short-lived
+  // preAuthToken from /api/auth/login plus a 6-digit TOTP code (or a one-time
+  // recovery code) for a real session token.
+  app.post('/api/auth/2fa/verify', async (req, res) => {
+    try {
+      const { preAuthToken, token } = req.body;
+      if (!preAuthToken || typeof token !== 'string' || !token.trim()) {
+        return res.status(400).json({ error: 'preAuthToken and code are required' });
+      }
+
+      let payload: any;
+      try {
+        payload = jwt.verify(preAuthToken, JWT_SECRET);
+      } catch {
+        return res.status(401).json({ error: 'Session expired, please log in again' });
+      }
+      if (payload.purpose !== '2fa-pending') return res.status(401).json({ error: 'Invalid session' });
+
+      const user = await prisma.user.findUnique({ where: { id: payload.id } });
+      if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+        return res.status(400).json({ error: '2FA is not enabled on this account' });
+      }
+
+      const cleanToken = token.trim();
+      let ok = verifyTotpToken(cleanToken, user.twoFactorSecret);
+      let usedRecovery = false;
+
+      if (!ok && user.twoFactorRecoveryCodes) {
+        const hashes: string[] = JSON.parse(user.twoFactorRecoveryCodes);
+        for (let i = 0; i < hashes.length; i++) {
+          if (await bcrypt.compare(cleanToken, hashes[i])) {
+            ok = true;
+            usedRecovery = true;
+            hashes.splice(i, 1); // recovery codes are one-time use
+            await prisma.user.update({ where: { id: user.id }, data: { twoFactorRecoveryCodes: JSON.stringify(hashes) } });
+            break;
+          }
+        }
+      }
+
+      if (!ok) {
+        await logAudit({ userId: user.id, action: 'auth.login.2fa_failed', ip: requestIp(req) });
+        return res.status(400).json({ error: 'Invalid code' });
+      }
+
+      const jwtToken = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+      await logAudit({
+        userId: user.id,
+        action: usedRecovery ? 'auth.login.2fa_recovery_used' : 'auth.login.2fa',
+        ip: requestIp(req),
+        metadata: usedRecovery ? { recoveryCodesRemaining: JSON.parse(user.twoFactorRecoveryCodes || '[]').length } : null
+      });
+      res.json({ token: jwtToken, user: { id: user.id, email: user.email, name: user.name } });
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
   app.get('/api/auth/me', authenticateToken, async (req: any, res) => {
     try {
       const user = await prisma.user.findUnique({ where: { id: req.user.id } });
       if (!user) return res.sendStatus(404);
-      res.json({ id: user.id, email: user.email, name: user.name, role: user.role, plan: user.subscriptionPlan, isBlocked: user.isBlocked });
+      res.json({
+        id: user.id, email: user.email, name: user.name, role: user.role,
+        plan: user.subscriptionPlan, isBlocked: user.isBlocked, twoFactorEnabled: user.twoFactorEnabled
+      });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
+    }
+  });
+
+  // --- 2FA (TOTP) — Faz 1.4 ---
+  // Step 1: generate a secret + QR code, stash it as "pending" until confirmed.
+  app.post('/api/2fa/setup', authenticateToken, async (req: any, res) => {
+    try {
+      const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (!user) return res.sendStatus(404);
+      if (user.twoFactorEnabled) return res.status(400).json({ error: '2FA is already enabled' });
+
+      const secret = generateTotpSecret();
+      await prisma.user.update({ where: { id: user.id }, data: { twoFactorSecretPending: secret } });
+      const qrCode = await totpQrCodeDataUrl(user.email, secret);
+      res.json({ secret, qrCode, otpauthUrl: totpKeyUri(user.email, secret) });
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
+  // Step 2: confirm setup with a live code from the authenticator app.
+  // Returns one-time recovery codes — shown to the user exactly once.
+  app.post('/api/2fa/enable', authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = totpVerifySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+      const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (!user) return res.sendStatus(404);
+      if (!user.twoFactorSecretPending) return res.status(400).json({ error: '2FA setup has not been started' });
+      if (!verifyTotpToken(parsed.data.token, user.twoFactorSecretPending)) {
+        return res.status(400).json({ error: 'Invalid code — check your authenticator app and try again' });
+      }
+
+      const recoveryCodes = generateRecoveryCodes();
+      const hashedCodes = await Promise.all(recoveryCodes.map(c => bcrypt.hash(c, 10)));
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          twoFactorEnabled: true,
+          twoFactorSecret: user.twoFactorSecretPending,
+          twoFactorSecretPending: null,
+          twoFactorRecoveryCodes: JSON.stringify(hashedCodes)
+        }
+      });
+      await logAudit({ userId: user.id, action: 'auth.2fa.enabled', ip: requestIp(req) });
+      res.json({ recoveryCodes });
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
+  // Disable 2FA — requires the account password as confirmation.
+  app.post('/api/2fa/disable', authenticateToken, async (req: any, res) => {
+    try {
+      const { password } = req.body;
+      if (typeof password !== 'string' || !password) return res.status(400).json({ error: 'Password is required' });
+
+      const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (!user || !user.password) return res.sendStatus(404);
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) return res.status(400).json({ error: 'Incorrect password' });
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { twoFactorEnabled: false, twoFactorSecret: null, twoFactorSecretPending: null, twoFactorRecoveryCodes: null }
+      });
+      await logAudit({ userId: user.id, action: 'auth.2fa.disabled', ip: requestIp(req) });
+      res.json({ message: '2FA disabled' });
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
+  // --- API KEYS — Faz 1.5 ---
+  // Programmatic access: any endpoint behind authenticateToken also accepts
+  // `Authorization: Bearer umk_...` in place of a JWT (see authenticateToken above).
+  app.get('/api/api-keys', authenticateToken, async (req: any, res) => {
+    try {
+      const userWorkspaces = await prisma.workspace.findMany({
+        where: { OR: [{ userId: req.user.id }, { members: { some: { userId: req.user.id } } }] },
+        select: { id: true }
+      });
+      const wsIds = userWorkspaces.map((w: any) => w.id);
+      const keys = await prisma.apiKey.findMany({
+        where: { workspaceId: { in: wsIds } },
+        select: { id: true, name: true, preview: true, workspaceId: true, lastUsedAt: true, createdAt: true },
+        orderBy: { createdAt: 'desc' }
+      });
+      res.json(keys);
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
+  // Returns the raw key exactly once — the server never stores or re-displays it.
+  app.post('/api/api-keys', authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = apiKeyCreateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+      const ws = await checkWorkspaceAccess(parsed.data.workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
+      const { rawKey, hash, preview } = generateApiKey();
+      const key = await prisma.apiKey.create({
+        data: { name: parsed.data.name, keyHash: hash, preview, workspaceId: parsed.data.workspaceId, userId: req.user.id }
+      });
+      await logAudit({ userId: req.user.id, workspaceId: parsed.data.workspaceId, action: 'apikey.create', targetType: 'ApiKey', targetId: key.id, ip: requestIp(req) });
+      res.status(201).json({ id: key.id, name: key.name, preview: key.preview, createdAt: key.createdAt, rawKey });
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
+  app.delete('/api/api-keys/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const key = await prisma.apiKey.findUnique({ where: { id: req.params.id } });
+      if (!key) return res.status(404).json({ error: 'Not found' });
+      const ws = await checkWorkspaceAccess(key.workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
+      await prisma.apiKey.delete({ where: { id: key.id } });
+      await logAudit({ userId: req.user.id, workspaceId: key.workspaceId, action: 'apikey.delete', targetType: 'ApiKey', targetId: key.id, ip: requestIp(req) });
+      res.json({ success: true });
+    } catch (error: any) {
+      serverError(res, error);
     }
   });
 
@@ -671,7 +808,7 @@ async function startServer() {
       ]);
       res.json({ totalUsers, totalMonitors, activeMonitors, totalWorkspaces });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -695,7 +832,7 @@ async function startServer() {
       });
       res.json(users);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -706,9 +843,10 @@ async function startServer() {
         where: { id: req.params.id },
         data: { isBlocked }
       });
+      await logAudit({ userId: req.user.id, action: 'admin.user.block', targetType: 'User', targetId: user.id, ip: requestIp(req), metadata: { isBlocked } });
       res.json({ id: user.id, isBlocked: user.isBlocked });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -722,9 +860,10 @@ async function startServer() {
           subscriptionExpires: expiresAt ? new Date(expiresAt) : null 
         }
       });
+      await logAudit({ userId: req.user.id, action: 'admin.user.subscription', targetType: 'User', targetId: user.id, ip: requestIp(req), metadata: { plan, expiresAt } });
       res.json({ id: user.id, subscriptionPlan: user.subscriptionPlan, subscriptionExpires: user.subscriptionExpires });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -740,42 +879,67 @@ async function startServer() {
         where: { id: req.params.id },
         data: { role }
       });
+      await logAudit({ userId: req.user.id, action: 'admin.user.role', targetType: 'User', targetId: user.id, ip: requestIp(req), metadata: { role } });
       res.json({ id: user.id, role: user.role });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
   app.get('/api/admin/logs', authenticateToken, requireAdmin, async (req: any, res) => {
     try {
-      // In a real app, read from a file or DB. Here we return the debug log buffer.
+      // Rolling in-process debug buffer — useful for "what is the server doing
+      // right now", but it resets on every restart. For anything that needs to
+      // survive a restart or answer "who did what", see /api/admin/audit-logs.
       res.json({ logs: debugLogs });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
-  // Public Endpoints
+  // Faz 1.3: persistent, restart-proof audit trail. Paginated — newest first.
+  app.get('/api/admin/audit-logs', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const take = Math.min(parseInt(req.query.limit as string) || 50, 200);
+      const cursor = req.query.cursor as string | undefined;
+      const entries = await prisma.auditLog.findMany({
+        take,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+        orderBy: { createdAt: 'desc' }
+      });
+      const nextCursor = entries.length === take ? entries[entries.length - 1].id : null;
+      res.json({ entries, nextCursor });
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
+  // Public Endpoints — only expose non-sensitive fields
   app.get('/api/public/workspaces/:id', async (req, res) => {
     try {
       const workspace = await prisma.workspace.findUnique({
-        where: { id: req.params.id }
+        where: { id: req.params.id },
+        select: { id: true, name: true, createdAt: true }
       });
       if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
       res.json(workspace);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
   app.get('/api/public/workspaces/:id/monitors', async (req, res) => {
     try {
       const monitors = await prisma.monitor.findMany({
-        where: { workspaceId: req.params.id }
+        where: { workspaceId: req.params.id },
+        select: {
+          id: true, name: true, monitorType: true, url: true,
+          status: true, currentStatus: true, interval: true, lastChecked: true
+        }
       });
       res.json(monitors);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -789,6 +953,52 @@ async function startServer() {
     });
   };
 
+  // Returns the monitor only if the user has access to its workspace
+  const checkMonitorAccess = async (monitorId: string, userId: string) => {
+    const monitor = await prisma.monitor.findUnique({ where: { id: monitorId } });
+    if (!monitor) return null;
+    const ws = await checkWorkspaceAccess(monitor.workspaceId, userId);
+    return ws ? monitor : null;
+  };
+
+  // --- SOCKET.IO AUTH & SCOPED EMITS ---
+  // Anonymous connections are allowed (public status pages) but only receive
+  // sanitized 'monitor-status' / 'monitor-deleted' events. Full monitor objects
+  // and ping logs are emitted only to authenticated workspace rooms.
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next();
+    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+      if (!err) socket.data.user = user;
+      next();
+    });
+  });
+
+  io.on('connection', (socket) => {
+    socket.on('join-workspace', async (workspaceId: string) => {
+      try {
+        if (!socket.data.user || typeof workspaceId !== 'string') return;
+        const ws = await checkWorkspaceAccess(workspaceId, socket.data.user.id);
+        if (ws) socket.join(`ws:${workspaceId}`);
+      } catch { /* ignore */ }
+    });
+  });
+
+  const emitMonitorUpdated = (monitor: any) => {
+    io.to(`ws:${monitor.workspaceId}`).emit('monitor-updated', monitor);
+    io.emit('monitor-status', {
+      id: monitor.id,
+      status: monitor.status,
+      currentStatus: monitor.currentStatus,
+      lastChecked: monitor.lastChecked
+    });
+  };
+  const emitMonitorCreated = (monitor: any) => io.to(`ws:${monitor.workspaceId}`).emit('monitor-created', monitor);
+  const emitMonitorDeleted = (monitorId: string) => {
+    io.emit('monitor-deleted', monitorId); // only an id — safe to broadcast (public status pages need it)
+  };
+  const emitPingLog = (logEntry: any, workspaceId: string) => io.to(`ws:${workspaceId}`).emit('ping-log', logEntry);
+
   // Workspaces
   app.get('/api/workspaces', authenticateToken, async (req: any, res) => {
     try {
@@ -799,20 +1009,22 @@ async function startServer() {
       });
       res.json(workspaces);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
   app.put('/api/user', authenticateToken, async (req: any, res) => {
     try {
-      const { name, email, password } = req.body;
+      const parsed = userUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      const { name, email, password } = parsed.data;
       const updateData: any = {};
       if (name) updateData.name = name;
       if (email) updateData.email = email;
       if (password) {
         updateData.password = await bcrypt.hash(password, 12);
       }
-      
+
       const user = await prisma.user.update({
         where: { id: req.user.id },
         data: updateData
@@ -820,7 +1032,7 @@ async function startServer() {
       res.json({ id: user.id, name: user.name, email: user.email });
     } catch (error: any) {
       if (error.code === 'P2002') return res.status(400).json({ error: 'Email already exists' });
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -844,7 +1056,7 @@ async function startServer() {
       });
       res.json(updatedWorkspace);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
   // Workspace Members
@@ -873,7 +1085,7 @@ async function startServer() {
 
       res.json(membersList);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -908,9 +1120,10 @@ async function startServer() {
         include: { user: { select: { id: true, name: true, email: true } } }
       });
 
+      await logAudit({ userId: req.user.id, workspaceId: req.params.id, action: 'workspace.member.add', targetType: 'User', targetId: userToAdd.id, ip: requestIp(req) });
       res.json({ ...newMember.user, role: newMember.role, memberId: newMember.id });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -919,10 +1132,17 @@ async function startServer() {
       const ws = await checkWorkspaceAccess(req.params.id, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
+      // Ensure the member actually belongs to this workspace (prevent cross-workspace deletion)
+      const member = await prisma.workspaceMember.findUnique({ where: { id: req.params.memberId } });
+      if (!member || member.workspaceId !== req.params.id) {
+        return res.status(404).json({ error: 'Member not found' });
+      }
+
       await prisma.workspaceMember.delete({ where: { id: req.params.memberId } });
+      await logAudit({ userId: req.user.id, workspaceId: req.params.id, action: 'workspace.member.remove', targetType: 'User', targetId: member.userId, ip: requestIp(req) });
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -941,7 +1161,7 @@ async function startServer() {
       });
       res.json(groups);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -964,22 +1184,25 @@ async function startServer() {
       });
       res.json(group);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
   app.put('/api/monitor-groups/reorder', authenticateToken, async (req: any, res) => {
     try {
       const { groupIds } = req.body; // Array of group IDs in the new order
-      if (!Array.isArray(groupIds)) return res.status(400).json({ error: 'Invalid group IDs array' });
-
-      // Assuming all groups belong to the same workspace, check first group
-      if (groupIds.length > 0) {
-        const group = await prisma.monitorGroup.findUnique({ where: { id: groupIds[0] } });
-        if (!group) return res.status(404).json({ error: 'Group not found' });
-        const ws = await checkWorkspaceAccess(group.workspaceId, req.user.id);
-        if (!ws) return res.status(403).json({ error: 'Forbidden' });
+      if (!Array.isArray(groupIds) || groupIds.some((id: any) => typeof id !== 'string')) {
+        return res.status(400).json({ error: 'Invalid group IDs array' });
       }
+      if (groupIds.length === 0) return res.json({ success: true });
+
+      // Verify ALL groups belong to a single workspace the user can access
+      const groups = await prisma.monitorGroup.findMany({ where: { id: { in: groupIds } } });
+      if (groups.length !== groupIds.length) return res.status(404).json({ error: 'Group not found' });
+      const workspaceIds = [...new Set(groups.map(g => g.workspaceId))];
+      if (workspaceIds.length !== 1) return res.status(400).json({ error: 'Groups must belong to the same workspace' });
+      const ws = await checkWorkspaceAccess(workspaceIds[0], req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
       const updatePromises = groupIds.map((id: string, index: number) =>
         prisma.monitorGroup.update({
@@ -987,11 +1210,11 @@ async function startServer() {
           data: { order: index }
         })
       );
-      
+
       await prisma.$transaction(updatePromises);
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1009,7 +1232,7 @@ async function startServer() {
       const group = await prisma.monitorGroup.update({ where: { id: req.params.id }, data: parsed.data });
       res.json(group);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1026,7 +1249,7 @@ async function startServer() {
       await prisma.monitorGroup.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1042,7 +1265,7 @@ async function startServer() {
       const monitors = await prisma.monitor.findMany({ where: { workspaceId } });
       res.json(monitors);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1055,10 +1278,11 @@ async function startServer() {
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
       
       const monitor = await prisma.monitor.create({ data: parsed.data });
-      io.emit('monitor-created', monitor);
+      emitMonitorCreated(monitor);
+      await logAudit({ userId: req.user.id, workspaceId: monitor.workspaceId, action: 'monitor.create', targetType: 'Monitor', targetId: monitor.id, ip: requestIp(req), metadata: { name: monitor.name, monitorType: monitor.monitorType } });
       res.json(monitor);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1080,16 +1304,16 @@ async function startServer() {
       if (ownedIds.length === 0) return res.status(403).json({ error: 'Forbidden' });
       if (action === 'delete') {
         await prisma.monitor.deleteMany({ where: { id: { in: ownedIds } } });
-        ownedIds.forEach((id: string) => io.emit('monitor-deleted', id));
+        ownedIds.forEach((id: string) => emitMonitorDeleted(id));
       } else {
         const newStatus = action === 'pause' ? 'paused' : 'up';
         await prisma.monitor.updateMany({ where: { id: { in: ownedIds } }, data: { status: newStatus } });
         const updatedMonitors = await prisma.monitor.findMany({ where: { id: { in: ownedIds } } });
-        updatedMonitors.forEach((m: any) => io.emit('monitor-updated', m));
+        updatedMonitors.forEach((m: any) => emitMonitorUpdated(m));
       }
       res.json({ success: true, count: ownedIds.length });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1103,7 +1327,7 @@ async function startServer() {
       
       res.json(monitor);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1118,10 +1342,11 @@ async function startServer() {
       const parsed = monitorUpdateSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
       const monitor = await prisma.monitor.update({ where: { id: req.params.id }, data: parsed.data });
-      io.emit('monitor-updated', monitor);
+      emitMonitorUpdated(monitor);
+      await logAudit({ userId: req.user.id, workspaceId: monitor.workspaceId, action: 'monitor.update', targetType: 'Monitor', targetId: monitor.id, ip: requestIp(req), metadata: parsed.data });
       res.json(monitor);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1129,15 +1354,16 @@ async function startServer() {
     try {
       const existing = await prisma.monitor.findUnique({ where: { id: req.params.id } });
       if (!existing) return res.status(404).json({ error: 'Not found' });
-      
+
       const ws = await checkWorkspaceAccess(existing.workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
-      
+
       await prisma.monitor.delete({ where: { id: req.params.id } });
-      io.emit('monitor-deleted', req.params.id);
+      emitMonitorDeleted(req.params.id);
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'monitor.delete', targetType: 'Monitor', targetId: existing.id, ip: requestIp(req), metadata: { name: existing.name } });
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1146,7 +1372,10 @@ async function startServer() {
     try {
       const workspaceId = req.query.workspaceId as string;
       if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
-      
+
+      const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
       const logs = await prisma.pingLog.findMany({
         where: { monitor: { workspaceId } },
         orderBy: { timestamp: 'desc' },
@@ -1155,13 +1384,16 @@ async function startServer() {
       });
       res.json(logs);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
   // Logs
   app.get('/api/monitors/:id/logs', authenticateToken, async (req: any, res) => {
     try {
+      const monitor = await checkMonitorAccess(req.params.id, req.user.id);
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+
       const logs = await prisma.pingLog.findMany({
         where: { monitorId: req.params.id },
         orderBy: { timestamp: 'desc' },
@@ -1169,7 +1401,7 @@ async function startServer() {
       });
       res.json(logs);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1177,6 +1409,9 @@ async function startServer() {
   app.get('/api/monitors/:id/stats', authenticateToken, async (req: any, res) => {
     try {
       const monitorId = req.params.id;
+      const monitor = await checkMonitorAccess(monitorId, req.user.id);
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+
       const periods = [
         { label: '24h', days: 1 },
         { label: '7d', days: 7 },
@@ -1205,7 +1440,7 @@ async function startServer() {
 
       res.json(stats);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1213,6 +1448,9 @@ async function startServer() {
   app.get('/api/monitors/:id/history', authenticateToken, async (req: any, res) => {
     try {
       const monitorId = req.params.id;
+      const monitor = await checkMonitorAccess(monitorId, req.user.id);
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+
       const days = Array.from({ length: 7 }, (_, i) => 6 - i);
       
       const results = await Promise.all(days.map(async (i) => {
@@ -1251,7 +1489,7 @@ async function startServer() {
       results.sort((a, b) => b.index - a.index);
       res.json(results);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      serverError(res, error);
     }
   });
 
@@ -1268,11 +1506,11 @@ async function startServer() {
         await dispatchNotification(monitor, monitor.workspace, 'up', 'Heartbeat received');
       }
       
-      io.emit('ping-log', logEntry);
-      io.emit('monitor-updated', updated);
+      emitPingLog(logEntry, monitor.workspaceId);
+      emitMonitorUpdated(updated);
       res.json({ success: true, message: 'Heartbeat OK' });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      serverError(res, e);
     }
   });
 
@@ -1280,38 +1518,73 @@ async function startServer() {
   app.get('/api/maintenance-windows', authenticateToken, async (req: any, res) => {
     try {
       const monitorId = req.query.monitorId as string;
+      if (!monitorId) return res.status(400).json({ error: 'Monitor ID required' });
+      const monitor = await checkMonitorAccess(monitorId, req.user.id);
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+
       const windows = await prisma.maintenanceWindow.findMany({ where: { monitorId } });
       res.json(windows);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { serverError(res, e); }
   });
 
   app.post('/api/maintenance-windows', authenticateToken, async (req: any, res) => {
     try {
-      const { monitorId, startTime, endTime } = req.body;
-      const win = await prisma.maintenanceWindow.create({ data: { monitorId, startTime: new Date(startTime), endTime: new Date(endTime) } });
+      const parsed = maintenanceWindowCreateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      const { monitorId, startTime, endTime } = parsed.data;
+
+      const monitor = await checkMonitorAccess(monitorId, req.user.id);
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+      if (endTime <= startTime) return res.status(400).json({ error: 'End time must be after start time' });
+
+      const win = await prisma.maintenanceWindow.create({ data: { monitorId, startTime, endTime } });
       res.json(win);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { serverError(res, e); }
   });
-  
+
   app.delete('/api/maintenance-windows/:id', authenticateToken, async (req: any, res) => {
     try {
+      const win = await prisma.maintenanceWindow.findUnique({ where: { id: req.params.id } });
+      if (!win) return res.status(404).json({ error: 'Not found' });
+      const monitor = await checkMonitorAccess(win.monitorId, req.user.id);
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+
       await prisma.maintenanceWindow.delete({ where: { id: req.params.id } });
       res.json({ success: true });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { serverError(res, e); }
   });
 
   // Status Pages
+  const verifyMonitorsInWorkspace = async (monitorIds: string[], workspaceId: string) => {
+    if (!monitorIds.length) return true;
+    const count = await prisma.monitor.count({ where: { id: { in: monitorIds }, workspaceId } });
+    return count === monitorIds.length;
+  };
+
   app.get('/api/status-pages', authenticateToken, async (req: any, res) => {
     try {
       const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+      const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
       const pages = await prisma.publicStatusPage.findMany({ where: { workspaceId }, include: { monitors: true } });
       res.json(pages);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { serverError(res, e); }
   });
 
   app.post('/api/status-pages', authenticateToken, async (req: any, res) => {
     try {
-      const { workspaceId, title, description, slug, monitorIds } = req.body;
+      const parsed = statusPageCreateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      const { workspaceId, title, description, slug, monitorIds } = parsed.data;
+
+      const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+      if (!(await verifyMonitorsInWorkspace(monitorIds, workspaceId))) {
+        return res.status(400).json({ error: 'One or more monitors do not belong to this workspace' });
+      }
+
       const page = await prisma.publicStatusPage.create({
         data: {
           workspaceId, title, description, slug,
@@ -1319,30 +1592,55 @@ async function startServer() {
         },
         include: { monitors: true }
       });
+      await logAudit({ userId: req.user.id, workspaceId, action: 'statuspage.create', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: { slug } });
       res.json(page);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) {
+      if (e.code === 'P2002') return res.status(400).json({ error: 'Slug already in use' });
+      serverError(res, e);
+    }
   });
 
   app.put('/api/status-pages/:id', authenticateToken, async (req: any, res) => {
     try {
-      const { title, description, slug, monitorIds } = req.body;
+      const existing = await prisma.publicStatusPage.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const ws = await checkWorkspaceAccess(existing.workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
+      const parsed = statusPageUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      const { title, description, slug, monitorIds } = parsed.data;
+      if (monitorIds && !(await verifyMonitorsInWorkspace(monitorIds, existing.workspaceId))) {
+        return res.status(400).json({ error: 'One or more monitors do not belong to this workspace' });
+      }
+
       const page = await prisma.publicStatusPage.update({
         where: { id: req.params.id },
         data: {
           title, description, slug,
-          monitors: { set: monitorIds.map((id: string) => ({ id })) }
+          ...(monitorIds ? { monitors: { set: monitorIds.map((id: string) => ({ id })) } } : {})
         },
         include: { monitors: true }
       });
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'statuspage.update', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: parsed.data });
       res.json(page);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) {
+      if (e.code === 'P2002') return res.status(400).json({ error: 'Slug already in use' });
+      serverError(res, e);
+    }
   });
 
   app.delete('/api/status-pages/:id', authenticateToken, async (req: any, res) => {
     try {
+      const existing = await prisma.publicStatusPage.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const ws = await checkWorkspaceAccess(existing.workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
       await prisma.publicStatusPage.delete({ where: { id: req.params.id } });
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'statuspage.delete', targetType: 'PublicStatusPage', targetId: existing.id, ip: requestIp(req), metadata: { slug: existing.slug } });
       res.json({ success: true });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { serverError(res, e); }
   });
 
   app.get('/api/public-status/:slug', async (req, res) => {
@@ -1446,8 +1744,7 @@ async function startServer() {
 
       res.json(page);
     } catch (e: any) { 
-      log(`DEBUG: Error in public-status API: ${e.message}`);
-      res.status(500).json({ error: e.message }); 
+      serverError(res, e);
     }
   });
 
@@ -1547,7 +1844,7 @@ async function startServer() {
           where: { id: monitor.id },
           data: { currentStatus: 'maintenance', incidentActive: false, consecutiveFailures: 0 }
         });
-        io.emit('monitor-updated', updatedMonitor);
+        emitMonitorUpdated(updatedMonitor);
       }
       return; // Skip pinging during maintenance
     }
@@ -1588,9 +1885,20 @@ async function startServer() {
       } catch { /* ignore ssl errors */ }
     }
 
+    // SSRF guard: refuse to probe targets that resolve to private/internal addresses
+    let blocked = false;
+    if (!ALLOW_PRIVATE_TARGETS && monitor.url) {
+      const targetIp = await resolveTargetIp(monitor.url);
+      if (targetIp && isPrivateIp(targetIp)) {
+        status = 0;
+        errorMessage = 'Blocked: target resolves to a private/internal address (set ALLOW_PRIVATE_TARGETS=true to allow)';
+        blocked = true;
+      }
+    }
+
     // HTTP or TCP ping
     const start = Date.now();
-    try {
+    if (!blocked) try {
       if (monitor.monitorType === 'TCP') {
         if (!monitor.url || !monitor.port) throw new Error('Host and port required for TCP check');
         const tcpResult = await checkTCP(monitor.url, monitor.port);
@@ -1661,8 +1969,8 @@ async function startServer() {
       data: { lastChecked: new Date(), currentStatus: newCurrentStatus, consecutiveFailures: newConsecutiveFailures, incidentActive: newIncidentActive, ...sslUpdateData, ...dnsUpdateData }
     });
 
-    io.emit('ping-log', logEntry);
-    io.emit('monitor-updated', updatedMonitor);
+    emitPingLog(logEntry, monitor.workspaceId);
+    emitMonitorUpdated(updatedMonitor);
     log(`DEBUG: ${monitor.name}: ${status === 1 ? 'UP' : status === 2 ? 'DEGRADED' : 'DOWN'} (${responseTime}ms)`);
   }
 
@@ -1688,8 +1996,8 @@ async function startServer() {
              const logEntry = await prisma.pingLog.create({ data: { monitorId: hb.id, status: 0, responseTime: 0, errorMessage: 'Heartbeat missed', statusCode: 0 } });
              await dispatchNotification(hb, hb.workspace, 'down', 'Heartbeat missed');
              const updated = await prisma.monitor.update({ where: { id: hb.id }, data: { currentStatus: 'down', incidentActive: true, consecutiveFailures: hb.consecutiveFailures + 1 } });
-             io.emit('ping-log', logEntry);
-             io.emit('monitor-updated', updated);
+             emitPingLog(logEntry, hb.workspaceId);
+             emitMonitorUpdated(updated);
              log(`DEBUG: Heartbeat missed for ${hb.name}`);
           }
         }
@@ -1699,6 +2007,9 @@ async function startServer() {
       await new Promise(resolve => setTimeout(resolve, 10000));
     }
   }
+
+  // Unknown API routes → JSON 404 (instead of falling through to the SPA index.html)
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
   // Vite middleware for development
   const isProd = process.env.NODE_ENV === 'production';

@@ -5,7 +5,7 @@ import { formatDistanceToNow, format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import api from '../lib/api';
-import { socket } from '../lib/socket';
+import { socket, connectSocket } from '../lib/socket';
 import { useTranslation } from '../lib/i18n';
 
 interface DashboardProps {
@@ -215,8 +215,8 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       };
       fetchMonitors();
 
-      // Socket.io listeners
-      socket.connect();
+      // Socket.io listeners (authenticated — joins the workspace room)
+      connectSocket(workspace.id);
       
       const handleMonitorUpdated = (updatedMonitor: any) => {
         if (updatedMonitor.workspaceId === workspace.id) {

@@ -4,7 +4,7 @@ import { Bell, AlertTriangle, CheckCircle2, XCircle, Clock, ShieldAlert, Activit
 import { formatDistanceToNow, format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import api from '../lib/api';
-import { socket } from '../lib/socket';
+import { socket, connectSocket } from '../lib/socket';
 import { useTranslation } from '../lib/i18n';
 
 export default function Alerts({ workspace }: { user: any; workspace: any }) {
@@ -36,7 +36,7 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
       // we can just optionally refetch if needed.
     };
 
-    socket.connect();
+    connectSocket(workspace.id);
     socket.on('ping-log', handlePingLog);
 
     return () => {

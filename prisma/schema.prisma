@@ -43,8 +43,15 @@ model User {
   loginAttempts        Int       @default(0)
   lockUntil            DateTime?
 
+  // Two-factor authentication (TOTP)
+  twoFactorEnabled       Boolean   @default(false)
+  twoFactorSecret        String?   // confirmed secret, only set once 2FA is enabled
+  twoFactorSecretPending String?   // secret generated during setup, awaiting confirmation
+  twoFactorRecoveryCodes String?   // JSON array of bcrypt-hashed one-time recovery codes
+
   workspaces           Workspace[]
   workspaceMembers     WorkspaceMember[]
+  apiKeys              ApiKey[]
 }
 
 model Workspace {
@@ -64,6 +71,7 @@ model Workspace {
   telegramBotToken String?
   logRetentionDays Int                @default(90)
   members          WorkspaceMember[]
+  apiKeys          ApiKey[]
 }
 
 model MonitorGroup {
@@ -161,6 +169,43 @@ model PublicStatusPage {
   logoUrl     String?
   monitors    Monitor[] // Implicit Many-to-Many
   createdAt   DateTime  @default(now())
+}
+
+// Programmatic access tokens (Faz 1.5). The raw key is shown to the user only
+// once, at creation time — only its SHA-256 hash is ever persisted.
+model ApiKey {
+  id          String    @id @default(uuid())
+  name        String
+  keyHash     String    @unique
+  preview     String    // e.g. "umk_ab12…cd34", shown in the UI so users can tell keys apart
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId])
+}
+
+// Persistent audit trail (Faz 1.3). Intentionally NOT linked via Prisma
+// relations/foreign keys to User/Workspace: an audit record must survive the
+// deletion of the account or workspace it describes, so userId/workspaceId
+// here are plain (unenforced) references rather than @relation fields.
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  workspaceId String?
+  action      String   // e.g. "auth.login", "monitor.delete", "admin.user.block"
+  targetType  String?  // e.g. "Monitor", "User", "Workspace"
+  targetId    String?
+  ip          String?
+  metadata    String?  // JSON-encoded extra context
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
 }
 
 model WorkspaceMember {

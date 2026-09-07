@@ -16,6 +16,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.ts ./server.ts
+COPY --from=builder /app/lib ./lib
 
 ENV NODE_ENV=production
 ENV PORT=3000

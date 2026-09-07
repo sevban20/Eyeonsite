@@ -1,0 +1,517 @@
+openapi: 3.0.3
+info:
+  title: UptimeSaaS API
+  description: >
+    HTTP API for the UptimeSaaS monitoring & status pages platform.
+    Authenticate with either a JWT (from /api/auth/login) or an API key
+    (see /api/api-keys) as a Bearer token — both are accepted by every
+    endpoint marked `bearerAuth` below.
+  version: "1.0.0"
+servers:
+  - url: /api
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Either a JWT session token or an API key (format `umk_...`, see
+        POST /api-keys). Both are accepted interchangeably.
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          oneOf:
+            - type: string
+            - type: object
+    Monitor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        monitorType: { type: string, enum: [HTTP, TCP, PING, HEARTBEAT] }
+        url: { type: string, nullable: true }
+        port: { type: integer, nullable: true }
+        method: { type: string, enum: [GET, POST, HEAD, PUT, DELETE] }
+        interval: { type: integer, description: "Seconds between checks" }
+        status: { type: string, enum: [up, paused, maintenance] }
+        currentStatus: { type: string, enum: [up, down, degraded, maintenance] }
+        workspaceId: { type: string, format: uuid }
+        groupId: { type: string, format: uuid, nullable: true }
+        alertThreshold: { type: integer }
+        sslCheckEnabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    MonitorCreate:
+      type: object
+      required: [name, workspaceId]
+      properties:
+        name: { type: string }
+        workspaceId: { type: string, format: uuid }
+        monitorType: { type: string, enum: [HTTP, TCP, PING, HEARTBEAT], default: HTTP }
+        url: { type: string, description: "Required unless monitorType is HEARTBEAT" }
+        port: { type: integer, description: "Required for TCP" }
+        method: { type: string, enum: [GET, POST, HEAD, PUT, DELETE], default: GET }
+        interval: { type: integer, minimum: 10, maximum: 86400, default: 60 }
+        groupId: { type: string, format: uuid, nullable: true }
+        alertEmail: { type: string, format: email }
+        slackWebhook: { type: string, format: uri }
+        discordWebhook: { type: string, format: uri }
+        teamsWebhook: { type: string, format: uri }
+        zoomWebhook: { type: string, format: uri }
+        genericWebhook: { type: string, format: uri }
+        telegramChatId: { type: string }
+        alertThreshold: { type: integer, minimum: 1, maximum: 10, default: 2 }
+        responseTimeThreshold: { type: integer, nullable: true }
+        notifyOnDegraded: { type: boolean, default: false }
+        sslCheckEnabled: { type: boolean, default: true }
+        expectedKeyword: { type: string, nullable: true }
+        customHeaders: { type: string, description: "JSON-encoded header map" }
+        heartbeatGrace: { type: integer, default: 5, description: "Minutes, HEARTBEAT only" }
+    ApiKey:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        preview: { type: string, example: "umk_ab12…cd34" }
+        workspaceId: { type: string, format: uuid }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    ApiKeyCreated:
+      allOf:
+        - $ref: '#/components/schemas/ApiKey'
+        - type: object
+          properties:
+            rawKey:
+              type: string
+              description: The full API key — shown exactly once, never again.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 128 }
+                name: { type: string }
+      responses:
+        '201': { description: Registered, verification email sent }
+        '400': { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /auth/login:
+    post:
+      summary: Log in with email + password
+      description: >
+        On success, returns either `{ token, user }` directly, or — when the
+        account has 2FA enabled — `{ twoFactorRequired: true, preAuthToken }`,
+        which must be exchanged via POST /auth/2fa/verify.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { description: Logged in, or 2FA challenge issued }
+        '400': { description: Invalid credentials }
+        '403': { description: Account blocked or email unverified }
+        '429': { description: Account temporarily locked (brute-force protection) }
+
+  /auth/2fa/verify:
+    post:
+      summary: Complete a 2FA-gated login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preAuthToken, token]
+              properties:
+                preAuthToken: { type: string, description: From the /auth/login 2FA challenge }
+                token: { type: string, description: 6-digit TOTP code, or a one-time recovery code }
+      responses:
+        '200': { description: "{ token, user }" }
+        '400': { description: Invalid code }
+        '401': { description: Pre-auth session expired }
+
+  /auth/forgot-password:
+    post:
+      summary: Request a password reset email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties: { email: { type: string, format: email } }
+      responses:
+        '200': { description: Always returns success (prevents user enumeration) }
+
+  /auth/reset-password:
+    post:
+      summary: Complete a password reset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        '200': { description: Password changed }
+        '400': { description: Invalid or expired token }
+
+  /auth/verify-email:
+    get:
+      summary: Verify an email address
+      security: []
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: "{ token, user } — logs the user in" }
+
+  /auth/me:
+    get:
+      summary: Get the current user
+      responses:
+        '200': { description: Current user profile }
+
+  /2fa/setup:
+    post:
+      summary: Start TOTP 2FA setup
+      description: Returns a secret + QR code data URL. Confirm with POST /2fa/enable.
+      responses:
+        '200': { description: "{ secret, qrCode, otpauthUrl }" }
+
+  /2fa/enable:
+    post:
+      summary: Confirm 2FA setup and turn it on
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties: { token: { type: string, pattern: '^[0-9]{6}$' } }
+      responses:
+        '200': { description: "{ recoveryCodes } — shown once" }
+        '400': { description: Invalid code or setup not started }
+
+  /2fa/disable:
+    post:
+      summary: Disable 2FA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties: { password: { type: string } }
+      responses:
+        '200': { description: 2FA disabled }
+        '400': { description: Incorrect password }
+
+  /api-keys:
+    get:
+      summary: List API keys for the caller's workspaces
+      responses:
+        '200':
+          description: List of API keys (raw key never included)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiKey' }
+    post:
+      summary: Create an API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, workspaceId]
+              properties:
+                name: { type: string }
+                workspaceId: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Created — rawKey is shown exactly once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeyCreated' }
+
+  /api-keys/{id}:
+    delete:
+      summary: Revoke an API key
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Revoked }
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+
+  /workspaces:
+    get:
+      summary: List workspaces the caller belongs to
+      responses:
+        '200': { description: List of workspaces }
+
+  /workspaces/{id}/members:
+    get:
+      summary: List a workspace's members
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: List of members } }
+    post:
+      summary: Invite a user to a workspace by email
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties: { email: { type: string, format: email } }
+      responses: { '200': { description: Member added } }
+
+  /workspaces/{id}/members/{memberId}:
+    delete:
+      summary: Remove a workspace member
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: memberId
+          required: true
+          schema: { type: string, format: uuid }
+      responses: { '200': { description: Removed } }
+
+  /monitors:
+    get:
+      summary: List monitors in a workspace
+      parameters:
+        - in: query
+          name: workspaceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: List of monitors
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Monitor' }
+    post:
+      summary: Create a monitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MonitorCreate' }
+      responses:
+        '200':
+          description: Created monitor
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Monitor' }
+        '400': { description: Validation error }
+        '403': { description: Forbidden }
+
+  /monitors/{id}:
+    get:
+      summary: Get a monitor
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Monitor, content: { application/json: { schema: { $ref: '#/components/schemas/Monitor' } } } }
+    put:
+      summary: Update a monitor (partial — only send the fields you're changing)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Any subset of MonitorCreate's properties (except workspaceId)
+      responses:
+        '200': { description: Updated monitor }
+    delete:
+      summary: Delete a monitor
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Deleted } }
+
+  /monitors/bulk/action:
+    put:
+      summary: Pause, resume, or delete multiple monitors at once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, action]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid } }
+                action: { type: string, enum: [pause, resume, delete] }
+      responses: { '200': { description: "{ success, count }" } }
+
+  /monitors/{id}/logs:
+    get:
+      summary: Recent ping logs for a monitor
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: List of ping log entries } }
+
+  /monitors/{id}/stats:
+    get:
+      summary: Uptime / latency statistics for a monitor
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Aggregate stats } }
+
+  /monitors/{id}/history:
+    get:
+      summary: Daily uptime history (for status-page style bar charts)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Per-day up/down/degraded counts } }
+
+  /heartbeat/{id}:
+    get:
+      summary: Heartbeat ping-in endpoint (called by the monitored cron job itself)
+      security: []
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Heartbeat recorded } }
+
+  /monitor-groups:
+    get:
+      summary: List monitor groups in a workspace
+      parameters: [{ in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: List of groups } }
+    post:
+      summary: Create a monitor group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, workspaceId]
+              properties:
+                name: { type: string }
+                color: { type: string }
+                workspaceId: { type: string, format: uuid }
+      responses: { '200': { description: Created group } }
+
+  /maintenance-windows:
+    get:
+      summary: List maintenance windows
+      responses: { '200': { description: List of maintenance windows } }
+    post:
+      summary: Schedule a maintenance window
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [monitorId, startTime, endTime]
+              properties:
+                monitorId: { type: string, format: uuid }
+                startTime: { type: string, format: date-time }
+                endTime: { type: string, format: date-time }
+      responses: { '200': { description: Created } }
+
+  /status-pages:
+    get:
+      summary: List the caller's status pages
+      responses: { '200': { description: List of status pages } }
+    post:
+      summary: Create a public status page
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspaceId, title, slug]
+              properties:
+                workspaceId: { type: string, format: uuid }
+                title: { type: string }
+                description: { type: string }
+                slug: { type: string, pattern: '^[A-Za-z0-9-]{1,64}$' }
+                monitorIds: { type: array, items: { type: string, format: uuid } }
+      responses: { '200': { description: Created status page } }
+
+  /status-pages/{id}:
+    put:
+      summary: Update a status page (partial)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Updated } }
+    delete:
+      summary: Delete a status page
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Deleted } }
+
+  /public-status/{slug}:
+    get:
+      summary: Public status page data (no auth)
+      security: []
+      parameters: [{ in: path, name: slug, required: true, schema: { type: string } }]
+      responses: { '200': { description: Status page + monitor statuses } }
+
+  /admin/stats:
+    get:
+      summary: "[Admin] Platform-wide counts"
+      responses: { '200': { description: Stats } }
+
+  /admin/users:
+    get:
+      summary: "[Admin] List all users"
+      responses: { '200': { description: List of users } }
+
+  /admin/audit-logs:
+    get:
+      summary: "[Admin] Paginated, persistent audit trail (Faz 1.3)"
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string, description: "id of the last entry from the previous page" }
+      responses: { '200': { description: "{ entries, nextCursor }" } }

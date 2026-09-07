@@ -7,3 +7,5 @@ coverage/
 .env*
 !.env.example
 nginx/certs/*
+_to_delete/
+*.code-workspace

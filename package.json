@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -29,8 +31,10 @@
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "nodemailer": "^8.0.4",
+    "otplib": "^12.0.1",
     "pg": "^8.20.0",
     "ping": "^1.0.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.13.2",
@@ -51,10 +55,12 @@
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^7.0.11",
     "@types/ping": "^0.4.4",
+    "@types/qrcode": "^1.5.5",
     "autoprefixer": "^10.4.21",
     "prisma": "^6.4.1",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^3.2.4"
   }
 }

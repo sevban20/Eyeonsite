@@ -35,5 +35,28 @@ services:
       - pgdata:/var/lib/postgresql/data
     restart: always
 
+  # Faz 1.6: automatic, retention-pruned PostgreSQL backups. Dumps land in the
+  # `db_backups` volume — mount or sync that path (e.g. with restic/rclone) to
+  # off-site storage, since a volume on the same host is not a real backup.
+  backup:
+    image: postgres:15-alpine
+    depends_on:
+      - db
+    environment:
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - DB_NAME=${DB_NAME:-uptimemonitor}
+      - PGHOST=db
+      - BACKUP_DIR=/backups
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
+      - BACKUP_INTERVAL_HOURS=${BACKUP_INTERVAL_HOURS:-24}
+    volumes:
+      - db_backups:/backups
+      - ./scripts/backup-db.sh:/scripts/backup-db.sh:ro
+      - ./scripts/backup-loop.sh:/scripts/backup-loop.sh:ro
+    entrypoint: ["sh", "/scripts/backup-loop.sh"]
+    restart: always
+
 volumes:
   pgdata:
+  db_backups:

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { socket } from '../lib/socket';
+import { socket, connectSocket } from '../lib/socket';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
   BarChart, Bar, Cell, PieChart, Pie
@@ -105,6 +105,11 @@ export default function MonitorDetail({ user, workspace }: any) {
       });
     }
   }, [monitor]);
+
+  // Join the workspace room for realtime updates once the monitor is loaded
+  useEffect(() => {
+    if (monitor?.workspaceId) connectSocket(monitor.workspaceId);
+  }, [monitor?.workspaceId]);
 
   useEffect(() => {
     if (!id) return;
