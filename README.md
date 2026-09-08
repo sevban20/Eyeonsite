@@ -19,6 +19,8 @@ HTTP, TCP, ICMP ping ve heartbeat monitörleri; SSL sertifikası ve DNS takibi;
 - **Bakım pencereleri** — planlı bakımda alarm üretilmez
 - **Güvenlik** — TOTP tabanlı iki faktörlü doğrulama, API anahtarları, kalıcı
   audit log, SSRF koruması, rate limiting, brute-force hesap kilidi
+- **Toplu içe aktarma** — çok şubeli kurulumlar için CSV'den monitör ve grup
+  oluşturma (`scripts/bulk-import.mjs`)
 - **Çok kullanıcılı** — workspace ve üye yönetimi
 - **İki dilli arayüz** — Türkçe / İngilizce
 
@@ -47,7 +49,7 @@ docker compose up -d --build
 npm install
 cp .env.example .env      # en azından DATABASE_URL ve JWT_SECRET
 npx prisma generate
-npx prisma migrate deploy     # semayi uygula
+npx prisma db push
 npm run dev
 ```
 
@@ -59,15 +61,6 @@ npm test        # vitest
 npm run build   # üretim derlemesi
 ```
 
-Şemayı değiştirdiğinde migration üretmeyi unutma — CI bunu kontrol ediyor:
-
-```bash
-npx prisma migrate dev --name aciklayici_bir_ad
-```
-
-Ayrıntılar ve `DROP` içeren migration'larda dikkat edilmesi gerekenler için
-[DEPLOY.md](DEPLOY.md#9-şema-değişikliği-yapmak).
-
 ## Proje yapısı
 
 ```
@@ -77,7 +70,7 @@ lib/               Saf, test edilebilir modüller (güvenlik, doğrulama,
 lib/__tests__/     Birim testleri
 prisma/schema.prisma
 src/               React arayüzü
-scripts/           Yedekleme ve sertifika yenileme script'leri
+scripts/           Yedekleme, sertifika yenileme ve toplu içe aktarma
 openapi.yaml       API dokümantasyonu
 PROJE_PLANI.md     Yol haritası ve bilinen eksikler
 DEPLOY.md          Sunucu kurulum ve işletim rehberi

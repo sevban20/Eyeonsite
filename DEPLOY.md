@@ -99,11 +99,9 @@ Server listening on http://0.0.0.0:3000 in PRODUCTION mode
 Pinger loop started (parallel mode)
 ```
 
-Şema, container açılışında `prisma migrate deploy` ile uygulanır: yalnızca
-`prisma/migrations/` altındaki, gözden geçirilmiş ve commit'lenmiş SQL
-dosyaları sırayla çalışır. Bu komut kendiliğinden hiçbir şey düşürmez ve
-uygulananları `_prisma_migrations` tablosunda tutar. `db` servisinin
-healthcheck'i sayesinde `app` ve `backup`, veritabanı hazır olana kadar bekler.
+Şema `prisma db push` ile container açılışında otomatik uygulanır; ayrı bir
+migration adımı yoktur. `db` servisinin healthcheck'i sayesinde `app` ve
+`backup`, veritabanı hazır olana kadar bekler.
 
 ## 5. Doğrulama
 
@@ -175,41 +173,45 @@ git pull
 docker compose up -d --build
 ```
 
-Bekleyen migration'lar açılışta otomatik uygulanır. Yine de şema değiştiren
-bir sürüme geçmeden önce yedek almak iyi bir alışkanlık:
+Yeni şema değişiklikleri açılışta otomatik uygulanır. Şema değiştiren bir
+sürüme geçmeden önce elle bir yedek al:
 
 ```bash
 docker compose exec -T db pg_dump -U "$DB_USER" "$DB_NAME" \
   | gzip > pre-deploy-$(date +%F).sql.gz
 ```
 
-## 9. Şema değişikliği yapmak
+## 10. Toplu monitör ekleme
 
-`prisma/schema.prisma`'yı elle değiştirip bırakmak **yetmez** — migration da
-üretilmelidir, yoksa CI kırılır ve sunucuda değişiklik hiç uygulanmaz.
+Arayüzde monitörler tek tek oluşturulur. Çok şubeli bir kurulumda bu pratik
+değil; `scripts/bulk-import.mjs` aynı işi CSV'den toplu yapar. Faz 1.5'te gelen
+API anahtarını kullanır, yani sunucuya SSH gerekmez — kendi makinenden de
+çalıştırabilirsin.
 
-```bash
-# geliştirme makinende, çalışan bir Postgres varken
-npx prisma migrate dev --name aciklayici_bir_ad
-```
-
-Bu komut `prisma/migrations/<zaman>_aciklayici_bir_ad/migration.sql` üretir ve
-lokal veritabanına uygular. **Üretilen SQL'i commit'lemeden önce oku** — özellikle
-`DROP` içeriyorsa, gerçekten kastettiğin şey olduğundan emin ol. Prisma bir
-kolonun yeniden adlandırıldığını anlayamaz; "eskisini düşür, yenisini ekle"
-olarak üretir ve o SQL prod'da veriyi siler. Böyle durumlarda üretilen dosyayı
-elle `ALTER TABLE ... RENAME COLUMN` olacak şekilde düzeltmek gerekir.
-
-### Zaten verisi olan bir veritabanını migration'lara geçirmek
-
-Bu kurulum sıfırdan migration'la başladığı için normalde gerekmez. Ama elinde
-`db push` ile oluşturulmuş, verisi olan bir veritabanı varsa `migrate deploy`
-"tablolar zaten var" diyerek hata verir. O durumda mevcut durumu başlangıç
-noktası olarak işaretle (hiçbir SQL çalıştırmaz, sadece kaydeder):
+Önce Ayarlar → Security → API Keys'ten bir anahtar oluştur (ham anahtar yalnızca
+bir kez gösterilir), sonra:
 
 ```bash
-docker compose exec app npx prisma migrate resolve --applied 20260908000000_init
+export EYEON_URL=https://eyeon.site
+export EYEON_API_KEY=umk_...
+
+node scripts/bulk-import.mjs subeler.csv                    # kuru çalışma
+node scripts/bulk-import.mjs subeler.csv --apply            # gerçekten oluştur
+node scripts/bulk-import.mjs subeler.csv --apply --composite # + lokasyon alarmı
 ```
+
+CSV biçimi için `scripts/ornek-subeler.csv` dosyasına bak. Sütunlar:
+`lokasyon` (grup adı), `ad`, `host`, `tip` (HTTP/TCP/PING/HEARTBEAT),
+`aralik` (saniye), `port` (yalnızca TCP).
+
+Davranış notları:
+
+- **Varsayılan kuru çalışmadır** — `--apply` verilmedikçe hiçbir şey yazmaz.
+- CSV baştan doğrulanır; bir satırda hata varsa hiçbir şey oluşturulmadan çıkar.
+- Aynı adlı monitörler ve var olan gruplar atlanır, yani script yarıda kalırsa
+  aynı dosyayla tekrar çalıştırmak güvenlidir.
+- `--composite` grupları lokasyon alarmına açar ama **bildirim kanallarını
+  doldurmaz** — onları arayüzden grup dişlisinden girmen gerekir.
 
 ## Notlar
 

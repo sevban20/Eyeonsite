@@ -1,0 +1,7 @@
+lokasyon,ad,host,tip,aralik,port
+Ankara Şube,Ankara — Türk Telekom,81.212.10.5,PING,60,
+Ankara Şube,Ankara — Vodafone Yedek,176.240.11.9,PING,60,
+İzmir Şube,İzmir — Türk Telekom,88.230.4.12,PING,60,
+İzmir Şube,İzmir — Superonline,178.233.7.44,PING,60,
+İzmir Şube,İzmir — Kamera NVR,10.20.5.10,TCP,120,554
+,Kurumsal Site,https://eyeon.site,HTTP,60,
