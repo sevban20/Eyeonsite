@@ -161,7 +161,21 @@
     "bulk_success": "{count} monitör başarıyla {action}",
     "interval_unit_min": "Dakika",
     "interval_unit_mins": "Dakika",
-    "interval_unit_secs": "Saniye"
+    "interval_unit_secs": "Saniye",
+    "composite_title": "Lokasyon Alarmı",
+    "composite_desc": "Bu grubu tek bir lokasyon gibi ele alır; kısmi ve tam kesinti için ayrı bildirim gönderir.",
+    "composite_badge_title": "Bu grubun bileşik durumu",
+    "composite_enable": "Lokasyon alarmını etkinleştir",
+    "composite_enable_desc": "Üyelerin bir kısmı düştüğünde \"kısmi kesinti\", tamamı düştüğünde \"tam kesinti\" olarak değerlendirilir.",
+    "composite_threshold": "Kısmi kesinti eşiği",
+    "composite_threshold_desc": "Kaç üye down olduğunda kısmi kesinti sayılacağı. Üyelerin tamamı düşerse eşikten bağımsız olarak tam kesinti kabul edilir.",
+    "composite_suppress": "Üye monitörlerin kendi bildirimlerini sustur",
+    "composite_suppress_desc": "Yalnızca lokasyon seviyesinde bildirim gönderilir; her devre için ayrı ayrı mesaj almazsınız.",
+    "composite_degraded_title": "Kısmi kesinti kanalları",
+    "composite_degraded_desc": "Bir veya birkaç devre düştü, lokasyon hâlâ ayakta. Genelde mesai içi takip yeterlidir.",
+    "composite_down_title": "Tam kesinti kanalları",
+    "composite_down_desc": "Tüm devreler düştü, lokasyon tamamen erişilemez durumda. Acil müdahale kanalları buraya.",
+    "composite_saved": "Lokasyon alarm ayarları kaydedildi"
   },
   "alerts": {
     "feed_label": "Genel Uyarı Akışı",

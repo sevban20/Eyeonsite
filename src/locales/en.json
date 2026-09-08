@@ -161,7 +161,21 @@
     "bulk_success": "Successfully {action}d {count} monitors",
     "interval_unit_min": "Minute",
     "interval_unit_mins": "Minutes",
-    "interval_unit_secs": "Seconds"
+    "interval_unit_secs": "Seconds",
+    "composite_title": "Location Alerting",
+    "composite_desc": "Treats this group as a single location and alerts differently for partial and total outages.",
+    "composite_badge_title": "Composite status of this group",
+    "composite_enable": "Enable location alerting",
+    "composite_enable_desc": "Some members down counts as a partial outage; all members down counts as a total outage.",
+    "composite_threshold": "Partial outage threshold",
+    "composite_threshold_desc": "How many members must be down to count as a partial outage. If every member is down it is treated as a total outage regardless of this value.",
+    "composite_suppress": "Mute individual member alerts",
+    "composite_suppress_desc": "Only location-level notifications are sent, instead of one message per circuit.",
+    "composite_degraded_title": "Partial outage channels",
+    "composite_degraded_desc": "One or more circuits are down but the location is still reachable. Business-hours follow-up is usually enough.",
+    "composite_down_title": "Total outage channels",
+    "composite_down_desc": "Every circuit is down and the location is completely unreachable. Put your urgent channels here.",
+    "composite_saved": "Location alerting settings saved"
   },
   "alerts": {
     "feed_label": "Global Alerts Feed",

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, CheckCircle2, XCircle, Clock, ChevronRight, ChevronDown, Trash2, Pause, Play, Globe, ExternalLink, Activity, Search, Filter, ArrowUpRight, CheckSquare, Square, Lock, FolderPlus, Folder, MoreVertical, Edit2, FolderOpen } from 'lucide-react';
+import { Plus, CheckCircle2, XCircle, Clock, ChevronRight, ChevronDown, Trash2, Pause, Play, Globe, ExternalLink, Activity, Search, Filter, ArrowUpRight, CheckSquare, Square, Lock, FolderPlus, Folder, MoreVertical, Edit2, FolderOpen, Settings2, AlertTriangle } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -191,6 +191,8 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
   const [newMonitor, setNewMonitor] = useState({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', interval: 60, method: 'GET', groupId: '' });
   const [newGroup, setNewGroup] = useState({ name: '', color: '#f97316' });
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  // Faz 3.5: lokasyon (composite) alarm ayarlari duzenlenen grup
+  const [compositeSettings, setCompositeSettings] = useState<any | null>(null);
   const [editingGroupName, setEditingGroupName] = useState('');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -302,6 +304,48 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     } catch (error) {
       console.error('Error updating group:', error);
       toast.error('Failed to update group');
+    }
+  };
+
+  // Kanallar sunucuda JSON string olarak tutuluyor; formda nesne olarak
+  // calisip kaydederken nesne gonderiyoruz (sema stringe cevirir).
+  const parseChannels = (raw: any) => {
+    if (!raw) return {};
+    try { return typeof raw === 'string' ? (JSON.parse(raw) || {}) : raw; } catch { return {}; }
+  };
+
+  const openCompositeSettings = (group: any) => {
+    setCompositeSettings({
+      id: group.id,
+      name: group.name,
+      compositeEnabled: !!group.compositeEnabled,
+      degradedThreshold: group.degradedThreshold || 1,
+      suppressMemberAlerts: !!group.suppressMemberAlerts,
+      degradedChannels: parseChannels(group.degradedChannels),
+      downChannels: parseChannels(group.downChannels)
+    });
+  };
+
+  const handleSaveCompositeSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!compositeSettings) return;
+    // Bos stringleri gondermiyoruz: sema url/email dogrulamasi yapiyor ve
+    // "kanal tanimli degil" ile "bos string" ayrimini korumak istiyoruz.
+    const clean = (obj: any) => Object.fromEntries(
+      Object.entries(obj || {}).filter(([, v]) => typeof v === 'string' && v.trim() !== '')
+    );
+    try {
+      await handleUpdateGroup(compositeSettings.id, {
+        compositeEnabled: compositeSettings.compositeEnabled,
+        degradedThreshold: Number(compositeSettings.degradedThreshold) || 1,
+        suppressMemberAlerts: compositeSettings.suppressMemberAlerts,
+        degradedChannels: clean(compositeSettings.degradedChannels),
+        downChannels: clean(compositeSettings.downChannels)
+      });
+      toast.success(t('dashboard.composite_saved'));
+      setCompositeSettings(null);
+    } catch {
+      // handleUpdateGroup zaten hatayi bildiriyor
     }
   };
 
@@ -651,6 +695,27 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {group.compositeEnabled && (
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${
+                          group.compositeStatus === 'down'
+                            ? 'bg-red-500/10 text-red-500'
+                            : group.compositeStatus === 'degraded'
+                              ? 'bg-amber-500/10 text-amber-500'
+                              : 'bg-emerald-500/10 text-emerald-500'
+                        }`}
+                        title={t('dashboard.composite_badge_title')}
+                      >
+                        {group.compositeStatus || 'up'}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openCompositeSettings(group); }}
+                      className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-white transition-colors"
+                      title={t('dashboard.composite_title')}
+                    >
+                      <Settings2 className="w-4 h-4" />
+                    </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group.id); }}
                       className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
@@ -916,6 +981,129 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
 
       {/* Add Group Modal */}
       <AnimatePresence>
+        {/* composite_modal_marker — Faz 3.5: lokasyon alarm ayarlari */}
+        {compositeSettings && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setCompositeSettings(null)}
+              className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-[2.5rem] p-10 shadow-2xl relative z-10 max-h-[85vh] overflow-y-auto"
+            >
+              <h2 className="text-3xl font-bold mb-2 font-display">{t('dashboard.composite_title')}</h2>
+              <p className="text-sm text-zinc-500 mb-8">{compositeSettings.name} — {t('dashboard.composite_desc')}</p>
+
+              <form onSubmit={handleSaveCompositeSettings} className="space-y-6">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-1 accent-orange-500 w-4 h-4"
+                    checked={compositeSettings.compositeEnabled}
+                    onChange={e => setCompositeSettings({ ...compositeSettings, compositeEnabled: e.target.checked })}
+                  />
+                  <span>
+                    <span className="text-sm font-bold">{t('dashboard.composite_enable')}</span>
+                    <span className="block text-xs text-zinc-500 mt-1">{t('dashboard.composite_enable_desc')}</span>
+                  </span>
+                </label>
+
+                {compositeSettings.compositeEnabled && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">
+                        {t('dashboard.composite_threshold')}
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
+                        value={compositeSettings.degradedThreshold}
+                        onChange={e => setCompositeSettings({ ...compositeSettings, degradedThreshold: e.target.value })}
+                      />
+                      <p className="text-xs text-zinc-500 mt-2 ml-1">{t('dashboard.composite_threshold_desc')}</p>
+                    </div>
+
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1 accent-orange-500 w-4 h-4"
+                        checked={compositeSettings.suppressMemberAlerts}
+                        onChange={e => setCompositeSettings({ ...compositeSettings, suppressMemberAlerts: e.target.checked })}
+                      />
+                      <span>
+                        <span className="text-sm font-bold">{t('dashboard.composite_suppress')}</span>
+                        <span className="block text-xs text-zinc-500 mt-1">{t('dashboard.composite_suppress_desc')}</span>
+                      </span>
+                    </label>
+
+                    {(['degradedChannels', 'downChannels'] as const).map(setKey => (
+                      <div key={setKey} className="border border-zinc-800 rounded-3xl p-6">
+                        <div className="flex items-center gap-2 mb-1">
+                          <AlertTriangle className={`w-4 h-4 ${setKey === 'downChannels' ? 'text-red-500' : 'text-amber-500'}`} />
+                          <h3 className="text-sm font-bold">
+                            {setKey === 'downChannels' ? t('dashboard.composite_down_title') : t('dashboard.composite_degraded_title')}
+                          </h3>
+                        </div>
+                        <p className="text-xs text-zinc-500 mb-5">
+                          {setKey === 'downChannels' ? t('dashboard.composite_down_desc') : t('dashboard.composite_degraded_desc')}
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {([
+                            ['alertEmail', 'Email', 'email'],
+                            ['telegramChatId', 'Telegram Chat ID', 'text'],
+                            ['slackWebhook', 'Slack Webhook', 'url'],
+                            ['discordWebhook', 'Discord Webhook', 'url'],
+                            ['teamsWebhook', 'Teams Webhook', 'url'],
+                            ['zoomWebhook', 'Zoom Webhook', 'url'],
+                            ['genericWebhook', 'Generic Webhook', 'url']
+                          ] as const).map(([field, label, type]) => (
+                            <div key={field}>
+                              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{label}</label>
+                              <input
+                                type={type}
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500 transition-colors text-sm"
+                                value={compositeSettings[setKey]?.[field] || ''}
+                                onChange={e => setCompositeSettings({
+                                  ...compositeSettings,
+                                  [setKey]: { ...compositeSettings[setKey], [field]: e.target.value }
+                                })}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setCompositeSettings(null)}
+                    className="flex-1 px-6 py-4 rounded-2xl font-bold border border-zinc-800 hover:bg-zinc-800 transition-colors text-sm"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 bg-white text-zinc-950 px-6 py-4 rounded-2xl font-bold transition-all shadow-xl shadow-white/5 text-sm"
+                  >
+                    {t('common.save')}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
         {showGroupModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
             <motion.div 

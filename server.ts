@@ -29,6 +29,10 @@ import {
 import { generateApiKey, hashApiKey, looksLikeApiKey } from './lib/apikeys';
 import { generateTotpSecret, totpKeyUri, totpQrCodeDataUrl, verifyTotpToken, generateRecoveryCodes } from './lib/totp';
 import { makeAuditLogger, requestIp } from './lib/audit';
+import {
+  evaluateGroupStatus, compositeTransition, channelSetFor, compositeReason,
+  type CompositeStatus
+} from './lib/composite';
 
 dotenv.config();
 
@@ -1496,13 +1500,13 @@ async function startServer() {
   // Heartbeat Endpoint
   app.get('/api/heartbeat/:id', async (req, res) => {
     try {
-      const monitor = await prisma.monitor.findUnique({ where: { id: req.params.id }, include: { workspace: true } });
+      const monitor = await prisma.monitor.findUnique({ where: { id: req.params.id }, include: { workspace: true, group: true } });
       if (!monitor || monitor.monitorType !== 'HEARTBEAT') return res.status(404).json({ error: 'Not found' });
       
       const logEntry = await prisma.pingLog.create({ data: { monitorId: monitor.id, status: 1, responseTime: 0, statusCode: 200 } });
       const updated = await prisma.monitor.update({ where: { id: monitor.id }, data: { lastChecked: new Date(), currentStatus: 'up', incidentActive: false, consecutiveFailures: 0 } });
       
-      if (monitor.currentStatus !== 'up') {
+      if (monitor.currentStatus !== 'up' && !memberAlertsSuppressed(monitor)) {
         await dispatchNotification(monitor, monitor.workspace, 'up', 'Heartbeat received');
       }
       
@@ -1754,7 +1758,10 @@ async function startServer() {
     if (type === 'up') statusText = '✅ RECOVERED';
     if (type === 'degraded') statusText = '⚠️ PERFORMANCE DEGRADATION';
     if (type === 'ssl_expiry') statusText = '🔒 SSL CERTIFICATE EXPIRING';
-    const message = `${statusText}\nMonitor: ${monitor.name}\nURL: ${monitor.url}\n${reason ? `Reason: ${reason}\n` : ''}Time: ${new Date().toISOString()}`;
+    // `monitor` burada duck-typed: gercek bir monitor ya da lib/composite
+    // uzerinden gelen grup-bildirimi nesnesi olabilir. Grup nesnesinde url
+    // bulunmadigi icin satir kosullu yazilir.
+    const message = `${statusText}\nMonitor: ${monitor.name}\n${monitor.url ? `URL: ${monitor.url}\n` : ''}${reason ? `Reason: ${reason}\n` : ''}Time: ${new Date().toISOString()}`;
 
     const dispatchers: Promise<any>[] = [];
 
@@ -1795,6 +1802,74 @@ async function startServer() {
     }
 
     await Promise.allSettled(dispatchers);
+  }
+
+  // --- Faz 3.5: LOKASYON (COMPOSITE) ALARMI ---
+  //
+  // Bir grup "lokasyon" olarak isaretlendiginde (compositeEnabled), uyelerinin
+  // bir kismi down ise degraded, tamami down ise down kabul edilir ve bu iki
+  // durum ayri kanallara bildirilir. Karar mantigi lib/composite.ts'te saf
+  // fonksiyonlar halindedir; buradaki kod yalnizca veritabani ve bildirim
+  // baglantisini kurar.
+
+  /** Uye monitorun kendi bildirimi, grup ayari nedeniyle bastirilmali mi? */
+  function memberAlertsSuppressed(monitor: any): boolean {
+    return !!(monitor?.group?.compositeEnabled && monitor.group.suppressMemberAlerts);
+  }
+
+  /**
+   * Grup kanal setini dispatchNotification'in bekledigi sekle donusturur.
+   * Kanallar veritabaninda JSON string olarak durur (bkz. prisma sema notu).
+   */
+  function groupNotificationTarget(group: any, set: 'degraded' | 'down') {
+    const raw = set === 'down' ? group.downChannels : group.degradedChannels;
+    let channels: any = {};
+    if (raw) {
+      try { channels = JSON.parse(raw) || {}; }
+      catch { log(`DEBUG: Group ${group.name} has malformed ${set}Channels JSON`); }
+    }
+    // url bilerek verilmiyor: bildirim metnindeki URL satiri, url yoksa
+    // tamamen atlanir.
+    return { name: group.name, ...channels };
+  }
+
+  async function evaluateCompositeGroups() {
+    const groups = await prisma.monitorGroup.findMany({
+      where: { compositeEnabled: true },
+      include: { monitors: true, workspace: true }
+    });
+
+    for (const group of groups) {
+      try {
+        const next = evaluateGroupStatus(group.monitors as any, group.degradedThreshold);
+        // null = degerlendirilecek uye yok (grup bos ya da tamami bakimda);
+        // bu durumda son bilinen durumu oldugu gibi birakiyoruz.
+        if (!next) continue;
+
+        const previous = (group.compositeStatus || 'up') as CompositeStatus;
+        const action = compositeTransition(previous, next);
+        if (action === 'none') continue;
+
+        await prisma.monitorGroup.update({
+          where: { id: group.id },
+          data: { compositeStatus: next }
+        });
+
+        const set = channelSetFor(action, previous);
+        if (!set) continue;
+
+        const type = action === 'recovered' ? 'up' : action;
+        await dispatchNotification(
+          groupNotificationTarget(group, set),
+          group.workspace,
+          type as any,
+          compositeReason(action, group.monitors as any)
+        );
+        log(`DEBUG: Composite group ${group.name}: ${previous} -> ${next} (${set} channels)`);
+      } catch (e: any) {
+        log(`DEBUG: Composite evaluation failed for group ${group.name}: ${e.message}`);
+      }
+    }
   }
 
   // --- LOG CLEANUP JOB ---
@@ -1954,13 +2029,13 @@ async function startServer() {
       if (newConsecutiveFailures >= (monitor.alertThreshold || 2)) {
         if (!newIncidentActive || (newIncidentActive && newCurrentStatus === 'degraded' && alertType === 'down')) {
           newIncidentActive = true; newCurrentStatus = alertType;
-          if (alertType === 'down' || monitor.notifyOnDegraded) {
+          if ((alertType === 'down' || monitor.notifyOnDegraded) && !memberAlertsSuppressed(monitor)) {
             await dispatchNotification(monitor, monitor.workspace, alertType as any, errorMessage);
           }
         } else if (newIncidentActive && newCurrentStatus !== 'down') { newCurrentStatus = alertType; }
       } else { if (!newIncidentActive) newCurrentStatus = 'up'; }
     } else {
-      if (newIncidentActive) await dispatchNotification(monitor, monitor.workspace, 'up');
+      if (newIncidentActive && !memberAlertsSuppressed(monitor)) await dispatchNotification(monitor, monitor.workspace, 'up');
       newIncidentActive = false; newConsecutiveFailures = 0; newCurrentStatus = 'up';
     }
 
@@ -1979,7 +2054,7 @@ async function startServer() {
     while (true) {
       try {
         const now = Date.now();
-        const activeMonitors = await prisma.monitor.findMany({ where: { status: { not: 'paused' } }, include: { workspace: true } });
+        const activeMonitors = await prisma.monitor.findMany({ where: { status: { not: 'paused' } }, include: { workspace: true, group: true } });
         
         // Regular active monitors (HTTP, TCP)
         const due = activeMonitors.filter(m => m.monitorType !== 'HEARTBEAT' && now - (m.lastChecked?.getTime() || 0) >= (m.interval || 60) * 1000);
@@ -1994,13 +2069,17 @@ async function startServer() {
           const limitMs = (hb.interval + (hb.heartbeatGrace || 5) * 60) * 1000;
           if (hb.lastChecked && now - hb.lastChecked.getTime() > limitMs && hb.currentStatus !== 'down') {
              const logEntry = await prisma.pingLog.create({ data: { monitorId: hb.id, status: 0, responseTime: 0, errorMessage: 'Heartbeat missed', statusCode: 0 } });
-             await dispatchNotification(hb, hb.workspace, 'down', 'Heartbeat missed');
+             if (!memberAlertsSuppressed(hb)) await dispatchNotification(hb, hb.workspace, 'down', 'Heartbeat missed');
              const updated = await prisma.monitor.update({ where: { id: hb.id }, data: { currentStatus: 'down', incidentActive: true, consecutiveFailures: hb.consecutiveFailures + 1 } });
              emitPingLog(logEntry, hb.workspaceId);
              emitMonitorUpdated(updated);
              log(`DEBUG: Heartbeat missed for ${hb.name}`);
           }
         }
+
+        // Uye durumlari guncellendikten SONRA calisir: grup kararini ayni
+        // turda yazilan taze durumlar uzerinden verir.
+        await evaluateCompositeGroups();
       } catch (error: any) {
         log(`DEBUG: Pinger error: ${error.message}`);
       }

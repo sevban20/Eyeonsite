@@ -84,6 +84,23 @@ model MonitorGroup {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   monitors    Monitor[]
   createdAt   DateTime  @default(now())
+
+  // --- Faz 3.5: lokasyon (composite) alarmi ---
+  // Grubu bir "lokasyon" gibi ele alir: uyelerin bir kismi down ise degraded,
+  // tamami down ise down kabul edilir ve bu iki durum AYRI kanallara bildirilir.
+  // Karar mantigi lib/composite.ts icinde, saf ve test edilmis haldedir.
+  compositeEnabled     Boolean @default(false)
+  compositeStatus      String  @default("up") // up | degraded | down (son bilinen bilesik durum)
+  degradedThreshold    Int     @default(1)    // kac uye down olunca degraded sayilir
+  suppressMemberAlerts Boolean @default(false) // uye monitorler ayrica bildirim atmasin
+
+  // Bildirim kanallari JSON string olarak tutulur: {alertEmail, slackWebhook,
+  // telegramChatId, discordWebhook, teamsWebhook, zoomWebhook, genericWebhook}.
+  // Monitor'deki gibi duz kolonlara acilsalardi ayni yedi alan iki severity icin
+  // tekrarlanip on dorde cikacakti; bu alanlar hicbir sorguda filtrelenmedigi
+  // icin JSON tasima maliyeti yok. Sema dogrulamasi lib/validation.ts'te.
+  degradedChannels     String?
+  downChannels         String?
 }
 
 model Monitor {

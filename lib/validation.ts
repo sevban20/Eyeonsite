@@ -111,17 +111,50 @@ export const userUpdateSchema = z.object({
   password: z.string().min(8).max(128).optional()
 });
 
+// --- Faz 3.5: lokasyon (composite) alarmi ---
+//
+// Kanal seti API'ye nesne olarak gelir ama veritabaninda tek bir JSON string
+// kolonunda durur. `.transform()` bunu sema seviyesinde yaptigi icin route'lar
+// `data: parsed.data`'yi degistirmeden prisma'ya gecirmeye devam edebiliyor.
+const groupChannelsObject = z.object({
+  alertEmail: z.string().email().optional().or(z.literal('')),
+  slackWebhook: z.string().url().optional().or(z.literal('')),
+  telegramChatId: z.string().max(64).optional(),
+  zoomWebhook: z.string().url().optional().or(z.literal('')),
+  discordWebhook: z.string().url().optional().or(z.literal('')),
+  teamsWebhook: z.string().url().optional().or(z.literal('')),
+  genericWebhook: z.string().url().optional().or(z.literal(''))
+}).strict();
+
+export const groupChannelsSchema = groupChannelsObject
+  .transform((v) => JSON.stringify(v))
+  .nullable();
+
+// Bu alanlar hem create hem update'te ayni: ikisinde de `.default()` YOK.
+// Yukaridaki uzun nottaki zod v4 tuzagi burada da gecerli — grup adini
+// degistiren bir PUT, gonderilmeyen composite alanlarini varsayilana
+// dondurmemeli.
+const compositeFields = {
+  compositeEnabled: z.boolean().optional(),
+  degradedThreshold: z.number().int().min(1).max(100).optional(),
+  suppressMemberAlerts: z.boolean().optional(),
+  degradedChannels: groupChannelsSchema.optional(),
+  downChannels: groupChannelsSchema.optional()
+};
+
 export const monitorGroupCreateSchema = z.object({
   name: z.string().min(1).max(100),
   color: z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i).default('#f97316'),
-  workspaceId: z.string().uuid()
+  workspaceId: z.string().uuid(),
+  ...compositeFields
 });
 
 export const monitorGroupUpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   color: z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i).optional(),
   collapsed: z.boolean().optional(),
-  order: z.number().int().optional()
+  order: z.number().int().optional(),
+  ...compositeFields
 });
 
 // --- Faz 1 additions ---

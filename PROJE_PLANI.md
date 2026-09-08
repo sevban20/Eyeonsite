@@ -48,7 +48,7 @@ Rakip ürünlerle (Better Uptime, UptimeRobot, Statuspage.io) en çok fark yarat
 | 3.2 | **Escalation policy / nöbet çizelgesi (on-call)** | "X dakika içinde onaylanmazsa ikinci kişiye bildir" mantığı yok. `EscalationPolicy` + `OnCallSchedule` modelleri gerekir. | L |
 | 3.3 | **PagerDuty / Opsgenie entegrasyonu** | Kurumsal müşteriler için standart beklenti; generic webhook üzerinden de yapılabilir ama native entegrasyon güven verir. | M |
 | 3.4 | **Bildirim şablonlarının özelleştirilebilmesi** | Mesaj metinleri şu an sabit kodlanmış (`dispatchNotification` içinde). Kullanıcı kendi şablonunu tanımlayabilmeli. | S |
-| 3.5 | **Sessize alma / snooze ve bildirim gruplama** | Birden fazla monitör aynı anda düşerse (örn. ağ kesintisi) tek toplu bildirim; ayrıca geçici "mute" seçeneği. | M |
+| 3.5 | ~~**Bildirim gruplama**~~ → **yapıldı** (lokasyon/composite alarmı) | `MonitorGroup` artık bir lokasyon gibi ele alınabiliyor: üyelerin bir kısmı down ise *kısmi kesinti*, tamamı down ise *tam kesinti* sayılıp **ayrı kanallara** bildiriliyor; `suppressMemberAlerts` ile üye monitörlerin tekil bildirimleri susturulabiliyor. Karar mantığı `lib/composite.ts`. **Kalan:** geçici "mute/snooze" seçeneği. | S |
 | 3.6 | **Kullanıcı bazlı bildirim tercihleri** | Şu an bildirim ayarları workspace/monitör seviyesinde; bireysel kullanıcı "bana da e-posta at" tercihi ekleyebilmeli (`WorkspaceMember` üzerine bildirim ayarları). | S |
 
 ### FAZ 4 — Ekip, Hesap ve Monetizasyon
