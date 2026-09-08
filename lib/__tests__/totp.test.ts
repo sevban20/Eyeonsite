@@ -48,3 +48,22 @@ describe('generateRecoveryCodes', () => {
     }
   });
 });
+
+// server.ts, kurtarma kodu karsilastirmasini yalnizca girdi bu bicime uydugunda
+// yapiyor (hatali TOTP denemelerinde 8 bcrypt cagrisini onlemek icin). Uretici
+// ile oradaki regex birbirinden ayrilirsa kurtarma kodlari sessizce calismaz
+// hale gelir; bu test ikisini bagli tutar. — server.ts kurtarma kodu bicimi
+describe('recovery code format contract with server.ts', () => {
+  const SERVER_RECOVERY_CODE_PATTERN = /^[0-9a-f]{5}-[0-9a-f]{5}$/i;
+
+  it('every generated code matches the pattern the login route accepts', () => {
+    for (const code of generateRecoveryCodes(16)) {
+      expect(code).toMatch(SERVER_RECOVERY_CODE_PATTERN);
+    }
+  });
+
+  it('a 6-digit TOTP code never looks like a recovery code', () => {
+    expect(SERVER_RECOVERY_CODE_PATTERN.test('123456')).toBe(false);
+    expect(SERVER_RECOVERY_CODE_PATTERN.test('000000')).toBe(false);
+  });
+});

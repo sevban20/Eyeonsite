@@ -1,20 +1,75 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Eyeon.site — Uptime Monitoring & Status Pages
 
-# Run and deploy your AI Studio app
+Kendi altyapınızda çalışan uptime izleme ve durum sayfası uygulaması.
+HTTP, TCP, ICMP ping ve heartbeat monitörleri; SSL sertifikası ve DNS takibi;
+çok kanallı bildirim; herkese açık durum sayfaları.
 
-This contains everything you need to run your app locally.
+## Özellikler
 
-View your app in AI Studio: https://ai.studio/apps/2249f3e6-2f30-4f6e-aa65-37d23c628905
+- **Monitör tipleri** — HTTP(S) (anahtar kelime doğrulama, özel header ve
+  metod), TCP port, ICMP ping, heartbeat (cron/cihaz tarafından çağrılan)
+- **Lokasyon (composite) alarmı** — bir grubu tek bir lokasyon gibi ele alır;
+  üyelerin bir kısmı düştüğünde *kısmi kesinti*, tamamı düştüğünde *tam
+  kesinti* olarak ayrı kanallara bildirir
+- **Bildirim kanalları** — e-posta, Slack, Discord, Microsoft Teams, Zoom,
+  Telegram, genel webhook
+- **SSL ve DNS takibi** — sertifika bitiş uyarısı, DNS çözümleme süresi ve IP
+  değişikliği tespiti
+- **Durum sayfaları** — herkese açık, kendi slug'ı olan sayfalar
+- **Bakım pencereleri** — planlı bakımda alarm üretilmez
+- **Güvenlik** — TOTP tabanlı iki faktörlü doğrulama, API anahtarları, kalıcı
+  audit log, SSRF koruması, rate limiting, brute-force hesap kilidi
+- **Çok kullanıcılı** — workspace ve üye yönetimi
+- **İki dilli arayüz** — Türkçe / İngilizce
 
-## Run Locally
+## Teknoloji
 
-**Prerequisites:**  Node.js
+React 19 + Vite + Tailwind (frontend) · Express + Prisma + PostgreSQL
+(backend) · Socket.io (gerçek zamanlı güncellemeler) · Docker Compose (dağıtım)
 
+## Sunucuya kurulum
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Üretim kurulumunun tamamı **[DEPLOY.md](DEPLOY.md)** içinde: `.env`
+yapılandırması, TLS sertifikaları, ilk açılış, doğrulama, yedekleme ve
+güncelleme adımları.
+
+```bash
+git clone https://github.com/sevban20/Eyeonsite.git && cd Eyeonsite
+cp .env.example .env      # doldur — ayrıntılar DEPLOY.md'de
+docker compose up -d --build
+```
+
+## Geliştirme
+
+**Gereksinimler:** Node.js 22+, çalışan bir PostgreSQL.
+
+```bash
+npm install
+cp .env.example .env      # en azından DATABASE_URL ve JWT_SECRET
+npx prisma generate
+npx prisma db push
+npm run dev
+```
+
+Faydalı komutlar:
+
+```bash
+npm run lint    # tsc --noEmit
+npm test        # vitest
+npm run build   # üretim derlemesi
+```
+
+## Proje yapısı
+
+```
+server.ts          Express API, socket.io ve pinger motoru
+lib/               Saf, test edilebilir modüller (güvenlik, doğrulama,
+                   TOTP, API anahtarları, audit, composite alarm)
+lib/__tests__/     Birim testleri
+prisma/schema.prisma
+src/               React arayüzü
+scripts/           Yedekleme ve sertifika yenileme script'leri
+openapi.yaml       API dokümantasyonu
+PROJE_PLANI.md     Yol haritası ve bilinen eksikler
+DEPLOY.md          Sunucu kurulum ve işletim rehberi
+```

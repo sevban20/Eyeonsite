@@ -399,7 +399,8 @@
     "dns_last_changed": "IP Son Değişim",
     "discord_webhook": "Discord Webhook URL",
     "teams_webhook": "Microsoft Teams Webhook URL",
-    "generic_webhook": "Generic Webhook URL"
+    "generic_webhook": "Generic Webhook URL",
+    "no_incidents_recorded": "Kayıtlı olay yok"
   },
   "status_page": {
     "powered_by": "Altyapı",

@@ -40,10 +40,14 @@ Doldurulması gerekenler:
 | `SMTP_*` | E-posta doğrulama ve şifre sıfırlama için zorunlu |
 | `BACKUP_RETENTION_DAYS` / `BACKUP_INTERVAL_HOURS` | Varsayılan 14 gün / 24 saat |
 
-> **Önemli:** `DB_PASSWORD`'ü **ilk `docker compose up`'tan önce** güçlü bir
-> değere çek. Postgres şifreyi yalnızca volume ilk oluşturulurken uygular;
-> sonradan değiştirmek `ALTER USER` gerektirir ve `DATABASE_URL`'i de
-> güncellemeyi unutursan uygulama veritabanına bağlanamaz.
+> **Önemli:** `DB_PASSWORD` ile `DATABASE_URL` içindeki şifre **birebir aynı
+> olmalı**. Postgres şifreyi yalnızca volume ilk oluşturulurken uygular;
+> sonradan değiştirmek `ALTER USER` gerektirir. Bu yüzden şifreyi ilk
+> `docker compose up`'tan önce kesinleştir.
+>
+> Geliştirme makinesindeki `.env` dosyasında 32 karakterlik rastgele bir şifre
+> zaten üretildi; sunucuda **yeni bir tane üret**, geliştirme şifresini taşıma:
+> `openssl rand -base64 24 | tr -d '/+=' | head -c 32`
 
 ## 3. TLS sertifikalarını yerleştir
 
@@ -63,9 +67,22 @@ sudo cp /etc/letsencrypt/live/eyeon.site/fullchain.pem nginx/certs/eyeonsite.pem
 sudo cp /etc/letsencrypt/live/eyeon.site/privkey.pem   nginx/certs/eyeonsite.key
 ```
 
-> Sertifikalar 90 günde bir yenilenir. Yenileme sonrası dosyaları tekrar
-> kopyalayıp `docker compose restart nginx` çalıştıracak bir cron/deploy
-> hook'u kurmadan bırakma — aksi halde üç ay sonra site sertifika hatası verir.
+Sertifikalar 90 günde bir yenilenir ve bu **otomatikleştirilmiş durumda**:
+`scripts/renew-certs.sh` sertifikanın bitimine 30 günden az kaldıysa nginx'i
+kısa süreliğine durdurup `certbot renew` çalıştırır, yeni dosyaları
+`nginx/certs/`'e kopyalar ve nginx'i geri açar. Certbot hata verse bile nginx
+`trap` ile mutlaka geri başlatılır.
+
+Cron'a ekle (haftada bir yeterli):
+
+```bash
+chmod +x scripts/renew-certs.sh
+sudo crontab -e
+# 0 4 * * 1 cd /opt/Eyeonsite && ./scripts/renew-certs.sh >> /var/log/eyeonsite-renew.log 2>&1
+```
+
+Kurduktan sonra bir kez elle çalıştırıp çıktısını gör — cron'un sessizce
+başarısız olduğunu üç ay sonra öğrenmek istemezsin.
 
 ## 4. Ayağa kaldır
 
@@ -123,9 +140,24 @@ docker compose exec backup ls -lh /backups
 ```
 
 > Volume, veritabanıyla **aynı sunucuda** duruyor — bu tek başına yedek
-> sayılmaz. Disk ya da sunucu kaybında dump'lar da gider. `db_backups`
-> içeriğini restic/rclone gibi bir araçla off-site bir hedefe (S3, B2, başka
-> bir sunucu) senkronlamadan kurulumu tamamlanmış sayma.
+> sayılmaz. Disk ya da sunucu kaybında dump'lar da gider.
+
+Off-site senkron (rclone ile, hedefi bir kez yapılandırdıktan sonra):
+
+```bash
+# 1) rclone kur ve hedefi tanımla (S3, Backblaze B2, Drive, başka bir sunucu...)
+sudo apt install -y rclone && rclone config     # hedefe "backup" adını ver
+
+# 2) volume'ün host üzerindeki yolunu bul
+docker volume inspect eyeonsite_db_backups --format '{{.Mountpoint}}'
+
+# 3) günlük senkron için cron
+sudo crontab -e
+# 30 4 * * * rclone sync /var/lib/docker/volumes/eyeonsite_db_backups/_data backup:eyeonsite-db --log-file=/var/log/eyeonsite-rclone.log
+```
+
+Kurduktan sonra **bir kez geri yükleme denemesi yap**. Test edilmemiş yedek,
+yedek değildir.
 
 Geri yükleme:
 

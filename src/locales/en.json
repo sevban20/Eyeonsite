@@ -382,7 +382,22 @@
     "dns_last_changed": "IP Last Changed",
     "discord_webhook": "Discord Webhook URL",
     "teams_webhook": "Microsoft Teams Webhook URL",
-    "generic_webhook": "Generic Webhook URL"
+    "generic_webhook": "Generic Webhook URL",
+    "calculating_sla": "Calculating SLA...",
+    "latency_percentiles": "Latency Percentiles",
+    "monthly": "Monthly",
+    "p50": "Median (P50)",
+    "p95": "P95 Latency",
+    "p99": "P99 Latency",
+    "performance": "Performance",
+    "quarterly": "Quarterly",
+    "reliability": "Reliability",
+    "sla_compliance": "SLA Compliance",
+    "sla_target": "Target",
+    "system_health": "System Health",
+    "timeout": "Timeout",
+    "yearly": "Yearly",
+    "no_incidents_recorded": "No incidents recorded"
   },
   "status_page": {
     "powered_by": "Powered by",

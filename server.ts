@@ -581,18 +581,25 @@ async function startServer() {
         });
       }
 
-      // Successful login — reset brute force counters
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { loginAttempts: 0, lockUntil: null }
-      });
-
       // 2FA (Faz 1.4): hand back a short-lived pre-auth token instead of the
       // real session token; the client exchanges it via /api/auth/2fa/verify.
+      //
+      // Brute-force sayaci burada BILEREK sifirlanmiyor. Once sifirlaniyordu ve
+      // bu, 2FA adimini korumasiz birakiyordu: parolayi bilen bir saldirgan
+      // "giris yap -> sayac sifirlansin -> yeni preAuthToken al -> kod dene"
+      // dongusuyle TOTP'yi hesap tarafinda hicbir fren olmadan deneyebiliyordu.
+      // Artik sayac ancak KIMLIK DOGRULAMA TAMAMLANINCA sifirlanir; 2FA acikken
+      // bu, /api/auth/2fa/verify icindeki basarili dogrulamadir.
       if (user.twoFactorEnabled) {
         const preAuthToken = jwt.sign({ id: user.id, purpose: '2fa-pending' }, JWT_SECRET, { expiresIn: '5m' });
         return res.json({ twoFactorRequired: true, preAuthToken });
       }
+
+      // Successful login (2FA yok) — brute force sayaclarini sifirla
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { loginAttempts: 0, lockUntil: null }
+      });
 
       const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
       await logAudit({ userId: user.id, action: 'auth.login', ip: requestIp(req) });
@@ -625,18 +632,40 @@ async function startServer() {
       if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
         return res.status(400).json({ error: '2FA is not enabled on this account' });
       }
+      if (user.isBlocked) {
+        return res.status(403).json({ error: 'Your account has been blocked by an administrator.' });
+      }
+
+      // Parola adimindaki ile ayni hesap kilidi burada da uygulanir; aksi halde
+      // 2FA adimi yalnizca IP basina rate limit ile korunur ve dagitik bir
+      // saldirgan hesap tarafinda hicbir frenle karsilasmaz.
+      if (user.lockUntil && user.lockUntil > new Date()) {
+        const minutesLeft = Math.ceil((user.lockUntil.getTime() - Date.now()) / 60000);
+        return res.status(429).json({
+          error: `Account temporarily locked due to too many failed attempts. Try again in ${minutesLeft} minute(s).`,
+          lockedUntil: user.lockUntil
+        });
+      }
 
       const cleanToken = token.trim();
       let ok = verifyTotpToken(cleanToken, user.twoFactorSecret);
       let usedRecovery = false;
+      let recoveryCodesRemaining: number | null = null;
 
-      if (!ok && user.twoFactorRecoveryCodes) {
+      // Kurtarma kodu karsilastirmasi yalnizca girdi kurtarma kodu BICIMINDEYSE
+      // yapilir. Aksi halde her hatali 6 haneli TOTP denemesi 8 bcrypt
+      // karsilastirmasi tetikliyordu — istek basina yaklasik 1 sn CPU, yani
+      // ucuz bir yuk amplifikasyonu.
+      const looksLikeRecoveryCode = /^[0-9a-f]{5}-[0-9a-f]{5}$/i.test(cleanToken);
+
+      if (!ok && looksLikeRecoveryCode && user.twoFactorRecoveryCodes) {
         const hashes: string[] = JSON.parse(user.twoFactorRecoveryCodes);
         for (let i = 0; i < hashes.length; i++) {
           if (await bcrypt.compare(cleanToken, hashes[i])) {
             ok = true;
             usedRecovery = true;
             hashes.splice(i, 1); // recovery codes are one-time use
+            recoveryCodesRemaining = hashes.length;
             await prisma.user.update({ where: { id: user.id }, data: { twoFactorRecoveryCodes: JSON.stringify(hashes) } });
             break;
           }
@@ -644,16 +673,42 @@ async function startServer() {
       }
 
       if (!ok) {
+        const newAttempts = (user.loginAttempts || 0) + 1;
+        const shouldLock = newAttempts >= MAX_LOGIN_ATTEMPTS;
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            loginAttempts: newAttempts,
+            ...(shouldLock ? { lockUntil: new Date(Date.now() + LOCK_DURATION_MINUTES * 60 * 1000) } : {})
+          }
+        });
+
+        if (shouldLock) {
+          await logAudit({ userId: user.id, action: 'auth.login.2fa_locked', ip: requestIp(req) });
+          return res.status(429).json({
+            error: `Too many failed attempts. Account locked for ${LOCK_DURATION_MINUTES} minutes.`
+          });
+        }
+
         await logAudit({ userId: user.id, action: 'auth.login.2fa_failed', ip: requestIp(req) });
-        return res.status(400).json({ error: 'Invalid code' });
+        const remaining = MAX_LOGIN_ATTEMPTS - newAttempts;
+        return res.status(400).json({
+          error: `Invalid code. ${remaining} attempt(s) remaining before lockout.`
+        });
       }
+
+      // Kimlik dogrulama tamamlandi — brute force sayaclarini simdi sifirla.
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { loginAttempts: 0, lockUntil: null }
+      });
 
       const jwtToken = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
       await logAudit({
         userId: user.id,
         action: usedRecovery ? 'auth.login.2fa_recovery_used' : 'auth.login.2fa',
         ip: requestIp(req),
-        metadata: usedRecovery ? { recoveryCodesRemaining: JSON.parse(user.twoFactorRecoveryCodes || '[]').length } : null
+        metadata: usedRecovery ? { recoveryCodesRemaining } : null
       });
       res.json({ token: jwtToken, user: { id: user.id, email: user.email, name: user.name } });
     } catch (error: any) {
