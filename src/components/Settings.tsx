@@ -43,6 +43,25 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
   const [justCreatedKey, setJustCreatedKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
 
+  // workspace App tarafindan asenkron yukleniyor ve useState yalnizca ilk
+  // render'da calisiyor; bu yuzden form kalici olarak bos kaliyordu. Bos formla
+  // "Update Workspace"e basmak workspace adini ve tum SMTP ayarlarini siliyordu.
+  // Bagimlilik workspace?.id: kullanicinin yazmakta oldugu degerleri her
+  // yeniden render'da ezmesin, yalnizca gercekten baska bir workspace gelince
+  // formu tazelesin.
+  useEffect(() => {
+    if (!workspace) return;
+    setWorkspaceForm({
+      name: workspace.name || '',
+      smtpHost: workspace.smtpHost || '',
+      smtpPort: workspace.smtpPort || '',
+      smtpUser: workspace.smtpUser || '',
+      smtpPass: '', // sunucu parolayi hic gondermez; bos birakmak "degistirme" demek
+      smtpFrom: workspace.smtpFrom || '',
+      telegramBotToken: workspace.telegramBotToken || ''
+    });
+  }, [workspace?.id]);
+
   useEffect(() => {
     if (workspace?.id) {
       fetchMembers();

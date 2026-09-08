@@ -1066,7 +1066,11 @@ async function startServer() {
           OR: [{ userId: req.user.id }, { members: { some: { userId: req.user.id } } }]
         } 
       });
-      res.json(workspaces);
+      // SMTP parolasi istemciye gonderilmez. Onceden workspace satiri oldugu
+      // gibi donuyordu; bu, parolayi sahibin yani sira her ADMIN uyenin
+      // tarayicisina da acik metin olarak tasiyordu. Arayuz zaten alani
+      // yalnizca-yazilir olarak kullaniyor, sadece "tanimli mi" bilgisi yeter.
+      res.json(workspaces.map(({ smtpPass, ...ws }) => ({ ...ws, smtpPassSet: !!smtpPass })));
     } catch (error: any) {
       serverError(res, error);
     }
@@ -1100,20 +1104,26 @@ async function startServer() {
       const ws = await checkWorkspaceAccess(req.params.id, req.user.id);
       if (!ws) return res.status(404).json({ error: 'Workspace not found' });
 
-      const { name, smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom, telegramBotToken } = req.body;
-      const updatedWorkspace = await prisma.workspace.update({
-        where: { id: req.params.id },
-        data: { 
-          name, 
-          smtpHost, 
-          smtpPort: smtpPort ? parseInt(smtpPort) : null, 
-          smtpUser, 
-          smtpPass, 
-          smtpFrom,
-          telegramBotToken 
-        }
-      });
-      res.json(updatedWorkspace);
+      // Yalnizca govdede GERCEKTEN gonderilen alanlar guncellenir. Onceden
+      // tum alanlar kosulsuz yaziliyordu; formu bos acan bir istemci tek bir
+      // "kaydet" ile workspace adini ve butun SMTP ayarlarini siliyordu.
+      const body = req.body || {};
+      const data: any = {};
+      for (const key of ['name', 'smtpHost', 'smtpUser', 'smtpFrom', 'telegramBotToken']) {
+        if (key in body) data[key] = body[key];
+      }
+      if ('smtpPort' in body) data.smtpPort = body.smtpPort ? parseInt(body.smtpPort) : null;
+      // Parola yalnizca dolu bir deger gonderildiginde degisir; arayuz mevcut
+      // parolayi hic gormedigi icin bos gonderim "degistirme" anlamina gelir.
+      if (typeof body.smtpPass === 'string' && body.smtpPass.trim() !== '') data.smtpPass = body.smtpPass;
+
+      if (typeof data.name === 'string' && data.name.trim() === '') {
+        return res.status(400).json({ error: 'Workspace name cannot be empty' });
+      }
+
+      const updatedWorkspace = await prisma.workspace.update({ where: { id: req.params.id }, data });
+      const { smtpPass: _omit, ...safeWorkspace } = updatedWorkspace;
+      res.json({ ...safeWorkspace, smtpPassSet: !!updatedWorkspace.smtpPass });
     } catch (error: any) {
       serverError(res, error);
     }

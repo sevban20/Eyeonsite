@@ -132,13 +132,21 @@ function MonitorCard({ monitor, selectedMonitors, toggleSelectMonitor, toggleSta
                   {monitor.sslDaysLeft !== null && monitor.sslDaysLeft <= 0 ? 'EXP' : monitor.sslValid ? (monitor.sslDaysLeft + 'd') : 'ERR'}
                 </div>
               )}
-              <a href={monitor.url} target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-zinc-400">
-                <ExternalLink className="w-3 h-3" />
-              </a>
+              {monitor.url && (
+                <a href={monitor.url} target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-zinc-400">
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
             </div>
+            {/* HEARTBEAT monitorlerinin url'i yoktur; adres ve ayiriciyi
+                gostermek bos bir "•" birakiyordu. */}
             <div className="flex items-center gap-3 text-[11px] text-zinc-500 font-medium">
-              <span className="truncate max-w-[250px] font-mono">{monitor.url}</span>
-              <span className="text-zinc-800">•</span>
+              {monitor.url && (
+                <>
+                  <span className="truncate max-w-[250px] font-mono">{monitor.url}</span>
+                  <span className="text-zinc-800">•</span>
+                </>
+              )}
               <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {monitor.interval}s</span>
             </div>
           </div>

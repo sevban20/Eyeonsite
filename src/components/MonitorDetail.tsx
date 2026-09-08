@@ -255,6 +255,13 @@ export default function MonitorDetail({ user, workspace }: any) {
     };
   }, [logs]);
 
+  // PING / TCP / HEARTBEAT monitorlerinin HTTP durum kodu yoktur. Onceden her
+  // satirda sabit "HTTP <kod>" yaziliyordu; basarili bir ping bile
+  // "HTTP ERROR ... GET" olarak gorunuyordu ki bu yanlis bilgi.
+  const isHttpMonitor = (monitor?.monitorType || 'HTTP') === 'HTTP';
+  const checkLabel = (statusCode?: number | null) =>
+    isHttpMonitor ? `HTTP ${statusCode || 'ERR'}` : (monitor?.monitorType || 'CHECK');
+
   const statusCodeStats = React.useMemo(() => {
     const counts: Record<number, number> = {};
     logs.forEach(log => {
@@ -831,7 +838,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3 }}
-                      className="glass border border-white/5 p-8 rounded-[2.5rem] card-gradient"
+                      className="w-full glass border border-white/5 p-8 rounded-[2.5rem] card-gradient"
                     >
                       <div className="flex items-center gap-3 mb-6">
                         <div className="p-2 bg-red-500/10 rounded-xl">
@@ -853,7 +860,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                             <div className={`flex-1 p-3 rounded-xl border ${incident.type === 'DOWN' ? 'bg-red-500/5 border-red-500/10' : 'bg-emerald-500/5 border-emerald-500/10'
                               }`}>
                               <div className={`text-xs font-bold mb-0.5 ${incident.type === 'DOWN' ? 'text-red-400' : 'text-emerald-400'}`}>
-                                {t('dashboard.title')} {incident.type === 'DOWN' ? t('monitor.went_down') : t('monitor.recovered')}
+                                {monitor.name} {incident.type === 'DOWN' ? t('monitor.went_down') : t('monitor.recovered')}
                                 {incident.duration && (
                                   <span className="ml-2 opacity-70 font-normal">
                                     ({t('monitor.down_for').replace('{duration}', incident.duration)})
@@ -861,7 +868,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                                 )}
                               </div>
                               <div className="text-[10px] font-mono text-zinc-500 mb-1">
-                                {format(incident.timestamp, 'MMM d, HH:mm:ss')} • HTTP {incident.statusCode || 'ERR'}
+                                {format(incident.timestamp, 'MMM d, HH:mm:ss')} • {checkLabel(incident.statusCode)}
                               </div>
                               {incident.errorMessage && (
                                 <div className="text-[9px] font-mono text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-400/20 max-w-xs truncate mt-2">
@@ -909,7 +916,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                                 {log.status === 1 ? 'Service is Operational' : 'Service Outage Detected'}
                               </div>
                               <div className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">
-                                HTTP {log.statusCode || 'ERROR'} • {log.responseTime}ms • {log.method || 'GET'}
+                                {checkLabel(log.statusCode)} • {log.responseTime}ms{isHttpMonitor ? ` • ${log.method || 'GET'}` : ''}
                               </div>
                             </div>
                           </div>
@@ -981,7 +988,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                             <div className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-2">Status</div>
                             <div className={`text-xs font-mono font-bold px-3 py-1.5 rounded-md inline-block ${incident.type === 'DOWN' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                               }`}>
-                              HTTP {incident.statusCode || 'ERR'}
+                              {checkLabel(incident.statusCode)}
                             </div>
                           </div>
                         </div>
