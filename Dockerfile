@@ -22,5 +22,13 @@ ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
-# Run migrations and start server
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && npx tsx server.ts"]
+# Bekleyen migration'lari uygula ve sunucuyu baslat.
+#
+# Onceden burada `prisma db push --accept-data-loss` vardi. O komut semayi
+# veritabanina zorla dayatir ve ADINDAN ANLASILACAGI UZERE veri kaybini pesinen
+# kabul eder: ornegin bir kolon yeniden adlandirildiginda bunu "eskisini dusur,
+# yenisini ekle" olarak yorumlar ve icindeki musteri verisini sessizce siler.
+# `migrate deploy` ise yalnizca prisma/migrations altindaki, gozden gecirilmis
+# ve commit'lenmis SQL dosyalarini sirayla uygular; kendiliginden hicbir sey
+# dusurmez ve uygulanmis migration'lari _prisma_migrations tablosunda tutar.
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx server.ts"]

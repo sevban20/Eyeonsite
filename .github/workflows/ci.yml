@@ -10,6 +10,28 @@ jobs:
   test:
     name: Lint, test & build
     runs-on: ubuntu-latest
+
+    # Migration tutarlilik kontrolu icin gercek bir Postgres gerekiyor:
+    # `prisma migrate diff --from-migrations` migration'lari bir golge
+    # veritabaninda oynatip sonucu semayla karsilastirir.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/shadow?schema=public
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,10 +47,18 @@ jobs:
 
       - name: Generate Prisma client
         run: npx prisma generate
-        env:
-          # generate doesn't touch a real database, but Prisma still reads
-          # DATABASE_URL from the schema's datasource block at this step
-          DATABASE_URL: postgresql://user:password@localhost:5432/uptimesaas?schema=public
+
+      # Semayi elle degistirip migration uretmeyi unutmak, bu kurulumdaki
+      # baslica hata yolu. Bu adim tam olarak onu yakalar: migration'lardan
+      # elde edilen sema ile schema.prisma arasinda fark varsa build kirilir.
+      - name: Check migrations match schema
+        run: |
+          npx prisma migrate diff \
+            --from-migrations ./prisma/migrations \
+            --to-schema-datamodel ./prisma/schema.prisma \
+            --shadow-database-url "$DATABASE_URL" \
+            --exit-code \
+          || (echo "::error::schema.prisma migration'larla uyusmuyor. 'npx prisma migrate dev --name <aciklama>' calistirip uretilen dosyayi commit'le." && exit 1)
 
       - name: Type check
         run: npm run lint

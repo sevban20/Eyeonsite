@@ -47,7 +47,7 @@ docker compose up -d --build
 npm install
 cp .env.example .env      # en azından DATABASE_URL ve JWT_SECRET
 npx prisma generate
-npx prisma db push
+npx prisma migrate deploy     # semayi uygula
 npm run dev
 ```
 
@@ -58,6 +58,15 @@ npm run lint    # tsc --noEmit
 npm test        # vitest
 npm run build   # üretim derlemesi
 ```
+
+Şemayı değiştirdiğinde migration üretmeyi unutma — CI bunu kontrol ediyor:
+
+```bash
+npx prisma migrate dev --name aciklayici_bir_ad
+```
+
+Ayrıntılar ve `DROP` içeren migration'larda dikkat edilmesi gerekenler için
+[DEPLOY.md](DEPLOY.md#9-şema-değişikliği-yapmak).
 
 ## Proje yapısı
 
