@@ -84,6 +84,34 @@ sudo crontab -e
 Kurduktan sonra bir kez elle çalıştırıp çıktısını gör — cron'un sessizce
 başarısız olduğunu üç ay sonra öğrenmek istemezsin.
 
+## 3b. Sunucuya özel ayarlar (mevcut bir nginx'in arkasına kurulum)
+
+Sunucuda zaten 80/443'ü tutan bir nginx varsa, compose'un kendi nginx'ini
+kaldırma ve uygulamayı yalnızca localhost'a yayınla. **`docker-compose.yml`'yi
+düzenleme** — o dosya git'te takip ediliyor ve ilk `git pull`da çakışır.
+Bunun yerine yanına `docker-compose.override.yml` oluştur; compose onu
+otomatik yükler ve dosya gitignore'dadır:
+
+```yaml
+services:
+  app:
+    ports:
+      # host:container — container portu, .env'deki PORT ile aynı olmalı.
+      # PORT tanımlı değilse Dockerfile'daki varsayılan 3000 geçerlidir.
+      - "127.0.0.1:3030:3000"
+  nginx:
+    profiles: ["never"]   # compose'un nginx'i hiç başlamasın
+```
+
+`127.0.0.1:` önekini koruma altına al — onsuz uygulama TLS'siz olarak doğrudan
+internetten erişilebilir hale gelir ve ön nginx baypas edilebilir.
+
+Ön nginx tarafındaki server bloğu, WebSocket başlıkları ve Cloudflare
+kullanıyorsan gerçek istemci IP'sinin nasıl geri kazanılacağı için
+`nginx.conf` içindeki bloğu örnek al; güvenlik başlıklarını (HSTS, CSP,
+X-Frame-Options) ön nginx'e taşımayı unutma, compose'un nginx'i kapatılınca
+onlar da kaybolur.
+
 ## 4. Ayağa kaldır
 
 ```bash

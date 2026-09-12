@@ -9,3 +9,6 @@ coverage/
 nginx/certs/*
 _to_delete/
 *.code-workspace
+
+# Sunucuya ozel compose ayarlari (port yayini, nginx devre disi birakma vb.)
+docker-compose.override.yml
