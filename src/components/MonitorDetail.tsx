@@ -29,9 +29,10 @@ export default function MonitorDetail({ user, workspace }: any) {
   const [showAddMaintenance, setShowAddMaintenance] = useState(false);
   const [newMaintenance, setNewMaintenance] = useState({ startTime: '', endTime: '' });
   const [activeTab, setActiveTab] = useState<'overview' | 'incidents' | 'settings' | 'maintenance'>('overview');
-  const [settings, setSettings] = useState({
+  const [settings, setSettings] = useState<any>({
     name: '',
     url: '',
+    port: null,
     method: 'GET',
     interval: 5,
     alertThreshold: 2,
@@ -90,6 +91,7 @@ export default function MonitorDetail({ user, workspace }: any) {
       setSettings({
         name: monitor.name || '',
         url: monitor.url || '',
+        port: monitor.port ?? null,
         method: monitor.method || 'GET',
         interval: monitor.interval || 5,
         alertThreshold: monitor.alertThreshold || 2,
@@ -1148,20 +1150,50 @@ export default function MonitorDetail({ user, workspace }: any) {
                           />
                         </div>
 
-                        <div className="space-y-4">
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Target URL</label>
-                          <div className="relative">
-                            <Globe className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                            <input
-                              type="url"
-                              required
-                              placeholder="https://example.com"
-                              className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold"
-                              value={settings.url}
-                              onChange={e => setSettings({ ...settings, url: e.target.value })}
-                            />
+                        {/* Hedef adres alani monitor tipine gore degisir.
+                            Onceden sabit type="url" + required idi: PING ve TCP
+                            monitorleri duz IP/host aldigi icin tarayici
+                            "8.8.8.8"i gecersiz sayip kendi dogrulama mesajini
+                            gosteriyor ve ayarlar HIC kaydedilemiyordu. HEARTBEAT
+                            monitorlerinin ise hedef adresi hic yok, yine de
+                            zorunlu bir alan gosteriliyordu. Olusturma modali
+                            (Dashboard.tsx) bunu dogru yapiyordu, ayarlar sekmesi
+                            geride kalmis. */}
+                        {monitor.monitorType !== 'HEARTBEAT' && (
+                          <div className={monitor.monitorType === 'TCP' ? 'grid grid-cols-3 gap-4' : ''}>
+                            <div className={`space-y-4 ${monitor.monitorType === 'TCP' ? 'col-span-2' : ''}`}>
+                              <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
+                                {['TCP', 'PING'].includes(monitor.monitorType) ? t('dashboard.host_ip') : t('dashboard.monitor_url')}
+                              </label>
+                              <div className="relative">
+                                <Globe className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
+                                <input
+                                  type={monitor.monitorType === 'HTTP' ? 'url' : 'text'}
+                                  required
+                                  placeholder={monitor.monitorType === 'TCP' ? '192.168.1.1' : monitor.monitorType === 'PING' ? '8.8.8.8' : 'https://example.com'}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold"
+                                  value={settings.url}
+                                  onChange={e => setSettings({ ...settings, url: e.target.value })}
+                                />
+                              </div>
+                            </div>
+                            {monitor.monitorType === 'TCP' && (
+                              <div className="space-y-4">
+                                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('dashboard.port')}</label>
+                                <input
+                                  type="number"
+                                  required
+                                  min={1}
+                                  max={65535}
+                                  placeholder="5432"
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold"
+                                  value={settings.port ?? ''}
+                                  onChange={e => setSettings({ ...settings, port: e.target.value === '' ? null : parseInt(e.target.value, 10) })}
+                                />
+                              </div>
+                            )}
                           </div>
-                        </div>
+                        )}
 
                         {monitor.monitorType === 'HTTP' && (
                           <div className="space-y-4">
