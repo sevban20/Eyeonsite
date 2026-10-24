@@ -38,3 +38,7 @@ echo "[backup] Done: $(du -h "$dest" | cut -f1)"
 
 echo "[backup] Pruning dumps older than ${RETENTION_DAYS} day(s) in $BACKUP_DIR"
 find "$BACKUP_DIR" -name "${DB_NAME}-*.sql.gz" -mtime "+${RETENTION_DAYS}" -print -delete
+# Migration oncesi alinan dump'lar (scripts/pre-migrate-backup.sh) ayni dizine
+# yaziliyor ve farkli bir ad kalibi kullaniyor; temizlik onlari da kapsamazsa
+# sinirsiz birikirler.
+find "$BACKUP_DIR" -name "premigrate-*.sql.gz" -mtime "+${RETENTION_DAYS}" -print -delete

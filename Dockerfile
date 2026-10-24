@@ -10,13 +10,15 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
-RUN apk add --no-cache openssl
+# postgresql-client: migration oncesi yedek icin pg_dump gerekiyor.
+RUN apk add --no-cache openssl postgresql-client
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.ts ./server.ts
 COPY --from=builder /app/lib ./lib
+COPY --from=builder /app/scripts ./scripts
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -31,4 +33,9 @@ EXPOSE 3000
 # `migrate deploy` ise yalnizca prisma/migrations altindaki, gozden gecirilmis
 # ve commit'lenmis SQL dosyalarini sirayla uygular; kendiliginden hicbir sey
 # dusurmez ve uygulanmis migration'lari _prisma_migrations tablosunda tutar.
-CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx server.ts"]
+#
+# Migration'dan ONCE yedek alinir (scripts/pre-migrate-backup.sh). Yalnizca
+# bekleyen migration varsa dump uretir ve basarisiz olsa bile acilisi
+# engellemez; amaci her sema degisikligine kendi geri donus noktasini
+# birakmak.
+CMD ["sh", "-c", "sh ./scripts/pre-migrate-backup.sh; npx prisma migrate deploy && npx tsx server.ts"]

@@ -4,6 +4,10 @@ services:
     # Artık 3000 portunu dışarı açmamıza gerek yok, sadece iç ağda (nginx için) açık kalacak.
     env_file:
       - .env
+    volumes:
+      # Migration oncesi yedekler, backup servisiyle ayni volume'e yazilir;
+      # boylece retention temizligi onlari da kapsar ve hepsi tek yerde durur.
+      - db_backups:/backups
     depends_on:
       db:
         condition: service_healthy

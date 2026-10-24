@@ -163,6 +163,18 @@ docker compose exec db psql -U "$DB_USER" -d "$DB_NAME" \
 `pg_dump` alır ve `db_backups` volume'üne yazar; retention süresini geçen
 dump'ları siler.
 
+**Aralığı kısa tut.** En kötü durumdaki veri kaybı doğrudan bu süredir: 24
+bırakılırsa bir arızada bir günlük iş kaybedilebilir. Varsayılan 4 saat;
+dump'lar birkaç MB olduğu için sıklaştırmanın pratikte maliyeti yok.
+
+**Migration öncesi otomatik yedek.** `app` container'ı açılışta, `migrate
+deploy`dan hemen önce `scripts/pre-migrate-backup.sh` çalıştırır. Yalnızca
+*bekleyen migration varsa* dump üretir (`premigrate-*.sql.gz`), yani sıradan
+yeniden başlatmalarda gereksiz dosya oluşmaz. Böylece şema değiştiren her
+deploy kendi geri dönüş noktasını bırakır. Yedek alınamazsa açılış
+engellenmez — sağlıklı bir sistemi yedekleme sorunu yüzünden kilitlemek
+istemiyoruz; log'da uyarı görürsün.
+
 ```bash
 docker compose exec backup ls -lh /backups
 ```
