@@ -397,7 +397,12 @@
     "system_health": "System Health",
     "timeout": "Timeout",
     "yearly": "Yearly",
-    "no_incidents_recorded": "No incidents recorded"
+    "no_incidents_recorded": "No incidents recorded",
+    "expected_keyword_desc": "The check fails if this text is not present in the response body. Leave empty to rely on the HTTP status code alone.",
+    "ssl_check_enabled": "Track SSL certificate",
+    "ssl_check_enabled_desc": "Verifies certificate validity and expiry on every check. Only meaningful for HTTPS targets.",
+    "heartbeat_grace": "Grace Period (minutes)",
+    "heartbeat_grace_desc": "How long to wait after a missed heartbeat before raising an alert."
   },
   "status_page": {
     "powered_by": "Powered by",

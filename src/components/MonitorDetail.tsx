@@ -34,8 +34,14 @@ export default function MonitorDetail({ user, workspace }: any) {
     url: '',
     port: null,
     method: 'GET',
-    interval: 5,
+    interval: 60,
     alertThreshold: 2,
+    responseTimeThreshold: null,
+    notifyOnDegraded: false,
+    expectedKeyword: '',
+    customHeaders: '',
+    sslCheckEnabled: true,
+    heartbeatGrace: 5,
     alertEmail: '',
     slackWebhook: '',
     telegramChatId: '',
@@ -93,7 +99,11 @@ export default function MonitorDetail({ user, workspace }: any) {
         url: monitor.url || '',
         port: monitor.port ?? null,
         method: monitor.method || 'GET',
-        interval: monitor.interval || 5,
+        expectedKeyword: monitor.expectedKeyword || '',
+        customHeaders: monitor.customHeaders || '',
+        sslCheckEnabled: monitor.sslCheckEnabled ?? true,
+        heartbeatGrace: monitor.heartbeatGrace ?? 5,
+        interval: monitor.interval || 60,
         alertThreshold: monitor.alertThreshold || 2,
         responseTimeThreshold: monitor.responseTimeThreshold || null,
         notifyOnDegraded: monitor.notifyOnDegraded || false,
@@ -1197,7 +1207,7 @@ export default function MonitorDetail({ user, workspace }: any) {
 
                         {monitor.monitorType === 'HTTP' && (
                           <div className="space-y-4">
-                            <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">HTTP Method</label>
+                            <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.method')}</label>
                             <select
                               className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold appearance-none"
                               value={settings.method}
@@ -1212,14 +1222,79 @@ export default function MonitorDetail({ user, workspace }: any) {
                           </div>
                         )}
 
+                        {/* Dogrulama ve istek ayarlari. Bunlar olusturma
+                            modalinde vardi ama ayarlar sekmesinde yoktu: bir
+                            monitor olusturulduktan sonra beklenen anahtar
+                            kelimesi, ozel basliklari veya SSL takibi hic
+                            degistirilemiyordu — tek care silip yeniden
+                            olusturmakti. */}
+                        {monitor.monitorType === 'HTTP' && (
+                          <div className="space-y-6 p-6 border border-zinc-800 rounded-3xl">
+                            <div className="space-y-4">
+                              <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('dashboard.expected_keyword')}</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. 'Welcome' or '{&quot;status&quot;:&quot;ok&quot;}'"
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold"
+                                value={settings.expectedKeyword}
+                                onChange={e => setSettings({ ...settings, expectedKeyword: e.target.value })}
+                              />
+                              <p className="text-xs text-zinc-500">{t('monitor.expected_keyword_desc')}</p>
+                            </div>
+
+                            <div className="space-y-4">
+                              <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('dashboard.custom_headers')}</label>
+                              <textarea
+                                placeholder='{"Authorization": "Bearer token..."}'
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-mono min-h-[80px]"
+                                value={settings.customHeaders}
+                                onChange={e => setSettings({ ...settings, customHeaders: e.target.value })}
+                              />
+                            </div>
+
+                            <label className="flex items-start gap-3 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="mt-1 accent-orange-500 w-4 h-4"
+                                checked={!!settings.sslCheckEnabled}
+                                onChange={e => setSettings({ ...settings, sslCheckEnabled: e.target.checked })}
+                              />
+                              <span>
+                                <span className="text-sm font-bold">{t('monitor.ssl_check_enabled')}</span>
+                                <span className="block text-xs text-zinc-500 mt-1">{t('monitor.ssl_check_enabled_desc')}</span>
+                              </span>
+                            </label>
+                          </div>
+                        )}
+
+                        {monitor.monitorType === 'HEARTBEAT' && (
+                          <div className="space-y-4">
+                            <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.heartbeat_grace')}</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="1440"
+                              required
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold"
+                              value={settings.heartbeatGrace}
+                              onChange={e => setSettings({ ...settings, heartbeatGrace: parseInt(e.target.value) })}
+                            />
+                            <p className="text-xs text-zinc-500">{t('monitor.heartbeat_grace_desc')}</p>
+                          </div>
+                        )}
+
                         <div className="space-y-4">
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Check Interval (min)</label>
+                          {/* Alan SANIYE cinsinden (sema: 10-86400). Etiket "min"
+                              diyordu ve sinir 1-60'ti: "5 dakika" diye 5 yazan
+                              kullanici 5 SANIYE gonderiyor ve kayit dogrulamaya
+                              takiliyordu. Genel bakistaki gosterim zaten saniye. */}
+                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.interval')}</label>
                           <div className="relative">
                             <Clock className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                             <input
                               type="number"
-                              min="1"
-                              max="60"
+                              min="10"
+                              max="86400"
                               required
                               className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold"
                               value={settings.interval}
