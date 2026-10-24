@@ -20,7 +20,11 @@ export default function StatusPagesList({ workspace }: any) {
     slug: '',
     themeColor: '#f97316',
     monitorIds: [] as string[],
-    groupIds: [] as string[]
+    groupIds: [] as string[],
+    showGroupMembers: false,
+    password: '',
+    removePassword: false,
+    passwordProtected: false
   });
 
   useEffect(() => {
@@ -49,13 +53,20 @@ export default function StatusPagesList({ workspace }: any) {
     e.preventDefault();
     if (!workspace) return;
 
+    // password alani UI'da uc durumlu: bos = dokunma, dolu = ayarla,
+    // "sifreyi kaldir" isaretli = bos string gonder (sunucuda korumayi siler).
+    const { removePassword, passwordProtected, password, ...rest } = formData;
+    const payload: any = { ...rest };
+    if (removePassword) payload.password = '';
+    else if (password) payload.password = password;
+
     try {
       if (editingId) {
-        const res = await api.put(`/status-pages/${editingId}`, formData);
+        const res = await api.put(`/status-pages/${editingId}`, payload);
         setPages(pages.map(p => p.id === editingId ? res.data : p));
         toast.success('Status page updated');
       } else {
-        const res = await api.post('/status-pages', { ...formData, workspaceId: workspace.id });
+        const res = await api.post('/status-pages', { ...payload, workspaceId: workspace.id });
         setPages([...pages, res.data]);
         toast.success('Status page created');
       }
@@ -84,7 +95,13 @@ export default function StatusPagesList({ workspace }: any) {
       slug: page.slug,
       themeColor: page.themeColor || '#f97316',
       monitorIds: page.monitors.map((m: any) => m.id),
-      groupIds: (page.groups || []).map((g: any) => g.id)
+      groupIds: (page.groups || []).map((g: any) => g.id),
+      showGroupMembers: !!page.showGroupMembers,
+      // Sunucu mevcut sifreyi hicbir zaman geri gondermez; alan bos acilir ve
+      // bos birakilmasi "degistirme" anlamina gelir.
+      password: '',
+      removePassword: false,
+      passwordProtected: !!page.passwordProtected
     });
     setShowModal(true);
   };
@@ -97,7 +114,11 @@ export default function StatusPagesList({ workspace }: any) {
       slug: Math.random().toString(36).substring(7),
       themeColor: '#f97316',
       monitorIds: [],
-      groupIds: []
+      groupIds: [],
+      showGroupMembers: false,
+      password: '',
+      removePassword: false,
+      passwordProtected: false
     });
     setShowModal(true);
   };
@@ -317,6 +338,52 @@ export default function StatusPagesList({ workspace }: any) {
                       <div className="col-span-2 text-center py-6 text-zinc-500 italic text-sm">{t('status_pages.no_groups')}</div>
                     )}
                   </div>
+                </div>
+
+                <div className="space-y-5 pt-6 border-t border-zinc-800">
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] ml-1">{t('status_pages.access')}</label>
+
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-1 accent-orange-500 w-4 h-4"
+                      checked={formData.showGroupMembers}
+                      onChange={e => setFormData({ ...formData, showGroupMembers: e.target.checked })}
+                    />
+                    <span>
+                      <span className="text-sm font-bold">{t('status_pages.show_members')}</span>
+                      <span className="block text-xs text-zinc-500 mt-1">{t('status_pages.show_members_desc')}</span>
+                    </span>
+                  </label>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">
+                      {formData.passwordProtected ? t('status_pages.password_change') : t('status_pages.password_set')}
+                    </label>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={8}
+                      disabled={formData.removePassword}
+                      placeholder={formData.passwordProtected ? t('status_pages.password_keep') : t('status_pages.password_placeholder')}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm disabled:opacity-40"
+                      value={formData.password}
+                      onChange={e => setFormData({ ...formData, password: e.target.value })}
+                    />
+                    <p className="text-xs text-zinc-500 mt-2 ml-1">{t('status_pages.password_desc')}</p>
+                  </div>
+
+                  {formData.passwordProtected && (
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="accent-orange-500 w-4 h-4"
+                        checked={formData.removePassword}
+                        onChange={e => setFormData({ ...formData, removePassword: e.target.checked, password: '' })}
+                      />
+                      <span className="text-sm font-bold text-red-400">{t('status_pages.password_remove')}</span>
+                    </label>
+                  )}
                 </div>
 
                 <div className="space-y-4 pt-6 border-t border-zinc-800">

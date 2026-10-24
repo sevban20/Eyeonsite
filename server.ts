@@ -1412,7 +1412,11 @@ async function startServer() {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
       const monitor = await prisma.monitor.update({ where: { id: req.params.id }, data: parsed.data });
       emitMonitorUpdated(monitor);
-      await logAudit({ userId: req.user.id, workspaceId: monitor.workspaceId, action: 'monitor.update', targetType: 'Monitor', targetId: monitor.id, ip: requestIp(req), metadata: parsed.data });
+      // customHeaders kullanicinin yazdigi ham JSON'dur ve siklikla
+      // "Authorization: Bearer ..." icerir; kalici audit kaydina acik metin
+      // olarak yazilmasin, yalnizca degistirilip degistirilmedigi kalsin.
+      const { customHeaders: _ch, ...monitorAuditable } = parsed.data as any;
+      await logAudit({ userId: req.user.id, workspaceId: monitor.workspaceId, action: 'monitor.update', targetType: 'Monitor', targetId: monitor.id, ip: requestIp(req), metadata: { ...monitorAuditable, ...(_ch === undefined ? {} : { customHeadersChanged: true }) } });
       res.json(monitor);
     } catch (error: any) {
       serverError(res, error);
@@ -1630,6 +1634,13 @@ async function startServer() {
     return count === monitorIds.length;
   };
 
+  // passwordHash hicbir API yanitinda yer almaz; istemciye yalnizca "sifre
+  // tanimli mi" bilgisi gider.
+  const safeStatusPage = (page: any) => {
+    const { passwordHash, ...rest } = page;
+    return { ...rest, passwordProtected: !!passwordHash };
+  };
+
   const verifyGroupsInWorkspace = async (groupIds: string[], workspaceId: string) => {
     if (!groupIds.length) return true;
     const count = await prisma.monitorGroup.count({ where: { id: { in: groupIds }, workspaceId } });
@@ -1644,7 +1655,7 @@ async function startServer() {
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
       const pages = await prisma.publicStatusPage.findMany({ where: { workspaceId }, include: { monitors: true, groups: true } });
-      res.json(pages);
+      res.json(pages.map(safeStatusPage));
     } catch (e: any) { serverError(res, e); }
   });
 
@@ -1652,7 +1663,7 @@ async function startServer() {
     try {
       const parsed = statusPageCreateSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-      const { workspaceId, title, description, slug, monitorIds, groupIds } = parsed.data;
+      const { workspaceId, title, description, slug, monitorIds, groupIds, showGroupMembers, password } = parsed.data;
 
       const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
@@ -1666,13 +1677,15 @@ async function startServer() {
       const page = await prisma.publicStatusPage.create({
         data: {
           workspaceId, title, description, slug,
+          ...(showGroupMembers === undefined ? {} : { showGroupMembers }),
+          ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}),
           monitors: { connect: monitorIds.map((id: string) => ({ id })) },
           groups: { connect: groupIds.map((id: string) => ({ id })) }
         },
         include: { monitors: true, groups: true }
       });
       await logAudit({ userId: req.user.id, workspaceId, action: 'statuspage.create', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: { slug } });
-      res.json(page);
+      res.json(safeStatusPage(page));
     } catch (e: any) {
       if (e.code === 'P2002') return res.status(400).json({ error: 'Slug already in use' });
       serverError(res, e);
@@ -1688,7 +1701,7 @@ async function startServer() {
 
       const parsed = statusPageUpdateSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-      const { title, description, slug, monitorIds, groupIds } = parsed.data;
+      const { title, description, slug, monitorIds, groupIds, showGroupMembers, password } = parsed.data;
       if (monitorIds && !(await verifyMonitorsInWorkspace(monitorIds, existing.workspaceId))) {
         return res.status(400).json({ error: 'One or more monitors do not belong to this workspace' });
       }
@@ -1700,13 +1713,20 @@ async function startServer() {
         where: { id: req.params.id },
         data: {
           title, description, slug,
+          ...(showGroupMembers === undefined ? {} : { showGroupMembers }),
+          // password gonderilmediyse mevcut sifreye dokunulmaz; bos string
+          // gonderildiyse koruma kaldirilir.
+          ...(password === undefined ? {} : { passwordHash: password === '' ? null : await bcrypt.hash(password, 10) }),
           ...(monitorIds ? { monitors: { set: monitorIds.map((id: string) => ({ id })) } } : {}),
           ...(groupIds ? { groups: { set: groupIds.map((id: string) => ({ id })) } } : {})
         },
         include: { monitors: true, groups: true }
       });
-      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'statuspage.update', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: parsed.data });
-      res.json(page);
+      // parsed.data'yi oldugu gibi loglamak sifreyi ACIK METIN olarak audit
+      // kaydina yazardi; kalici bir tabloda duran son yer orasi olmali.
+      const { password: _pw, ...auditable } = parsed.data as any;
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'statuspage.update', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: { ...auditable, passwordChanged: password !== undefined } });
+      res.json(safeStatusPage(page));
     } catch (e: any) {
       if (e.code === 'P2002') return res.status(400).json({ error: 'Slug already in use' });
       serverError(res, e);
@@ -1726,6 +1746,49 @@ async function startServer() {
     } catch (e: any) { serverError(res, e); }
   });
 
+  // Sifre korumali durum sayfalari icin kilit acma. /api/ altindaki genel
+  // limiter 15 dakikada 300 istek veriyor — bir sifre denemesi icin fazla
+  // comert, bu yuzden bu uca ayri ve dar bir limit konuldu.
+  const statusPageUnlockLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
+
+  const STATUS_PAGE_TOKEN_PURPOSE = 'status-page-access';
+
+  app.post('/api/public-status/:slug/unlock', statusPageUnlockLimiter, async (req, res) => {
+    try {
+      const { password } = req.body || {};
+      if (typeof password !== 'string' || !password) {
+        return res.status(400).json({ error: 'Password is required' });
+      }
+      const page = await prisma.publicStatusPage.findUnique({
+        where: { slug: req.params.slug },
+        select: { id: true, slug: true, passwordHash: true }
+      });
+      if (!page) return res.status(404).json({ error: 'Not found' });
+      if (!page.passwordHash) return res.json({ token: null, protected: false });
+
+      if (!(await bcrypt.compare(password, page.passwordHash))) {
+        return res.status(401).json({ error: 'Incorrect password' });
+      }
+
+      const token = jwt.sign(
+        { slug: page.slug, purpose: STATUS_PAGE_TOKEN_PURPOSE },
+        JWT_SECRET,
+        { expiresIn: '12h' }
+      );
+      res.json({ token });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  const hasStatusPageAccess = (req: any, slug: string) => {
+    const header = req.headers['authorization'];
+    const raw = (header && header.split(' ')[1]) || req.query.token;
+    if (!raw || typeof raw !== 'string') return false;
+    try {
+      const payload: any = jwt.verify(raw, JWT_SECRET);
+      return payload.purpose === STATUS_PAGE_TOKEN_PURPOSE && payload.slug === slug;
+    } catch { return false; }
+  };
+
   app.get('/api/public-status/:slug', async (req, res) => {
     try {
       const page = await prisma.publicStatusPage.findUnique({
@@ -1744,6 +1807,13 @@ async function startServer() {
         }
       });
       if (!page) return res.status(404).json({ error: 'Not found' });
+
+      // Sifre korumali sayfada, gecerli bir erisim jetonu yoksa ICERIK HIC
+      // uretilmez: yalnizca basligi ve korumali oldugu bilgisi doner. Monitor
+      // adlari, durumlar ve gecmis hicbir sekilde sizmaz.
+      if (page.passwordHash && !hasStatusPageAccess(req, page.slug)) {
+        return res.status(401).json({ protected: true, title: page.title, themeColor: page.themeColor, logoUrl: page.logoUrl });
+      }
 
       // Durum sayfasi iki tur ogeden olusabilir: tek tek secilmis monitorler ve
       // LOKASYONLAR (gruplar). Lokasyonlar tek satir halinde ozetlenir; uye
@@ -1851,11 +1921,19 @@ async function startServer() {
           memberCount: members.length,
           currentStatus: evaluateGroupStatus(members, g.degradedThreshold) || 'nodata',
           history,
-          avgUptime: avgOf(history)
+          avgUptime: avgOf(history),
+          // Uye servisler yalnizca sayfa bunu acikca istiyorsa gonderilir.
+          // Gonderildiginde bile sadece ad ve durum var — adres (url) public
+          // ciktida hic yok, bkz. yukaridaki include notu.
+          members: page.showGroupMembers
+            ? members.map((m: any) => ({ id: m.id, name: m.name, currentStatus: m.currentStatus, status: m.status }))
+            : undefined
         };
       });
 
-      res.json({ ...page, groups: groupSummaries });
+      // passwordHash istemciye asla gitmez.
+      const { passwordHash: _ph, ...publicPage } = page as any;
+      res.json({ ...publicPage, groups: groupSummaries });
     } catch (e: any) { 
       serverError(res, e);
     }

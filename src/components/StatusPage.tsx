@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../lib/api';
 import { socket, connectSocket } from '../lib/socket';
-import { Activity, CheckCircle2, XCircle, Globe, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Activity, CheckCircle2, XCircle, Globe, Clock, ShieldCheck, AlertCircle, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from '../lib/i18n';
 
@@ -11,24 +11,75 @@ export default function StatusPage() {
   const [statusPage, setStatusPage] = useState<any>(null);
   const [monitors, setMonitors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Sifre korumali sayfa: sunucu icerik yerine { protected: true } donuyor.
+  const [locked, setLocked] = useState<any>(null);
+  const [password, setPassword] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState('');
   const { t, language } = useTranslation();
+
+  // Erisim jetonu slug bazinda saklanir: ayni tarayicida farkli sayfalar
+  // birbirinin jetonunu kullanamaz.
+  const tokenKey = `statusPageToken:${slug}`;
+
+  const applyPageData = (data: any) => {
+    setStatusPage(data);
+    // Lokasyonlar (gruplar) ve tek tek secilmis monitorler ayni satir
+    // bicimiyle gosterilir.
+    setMonitors([
+      ...(data.groups || []).map((g: any) => ({ ...g, kind: 'location' })),
+      ...(data.monitors || []).map((m: any) => ({ ...m, kind: 'monitor' }))
+    ]);
+  };
+
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!slug || !password) return;
+    setUnlocking(true);
+    setUnlockError('');
+    try {
+      const res = await api.post(`/public-status/${slug}/unlock`, { password });
+      if (res.data.token) {
+        try { localStorage.setItem(tokenKey, res.data.token); } catch {}
+      }
+      const page = await api.get(`/public-status/${slug}`, {
+        headers: res.data.token ? { Authorization: `Bearer ${res.data.token}` } : undefined
+      });
+      applyPageData(page.data);
+      setLocked(null);
+      setPassword('');
+    } catch (err: any) {
+      setUnlockError(err.response?.status === 401
+        ? t('status_page.wrong_password')
+        : (err.response?.data?.error || t('status_page.unlock_failed')));
+    } finally {
+      setUnlocking(false);
+    }
+  };
 
   useEffect(() => {
     if (!slug) return;
 
     const fetchStatusPage = async () => {
       try {
-        const res = await api.get(`/public-status/${slug}`);
+        let token: string | null = null;
+        try { token = localStorage.getItem(tokenKey); } catch {}
+        const res = await api.get(`/public-status/${slug}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         setStatusPage(res.data);
         // Lokasyonlar (gruplar) ve tek tek secilmis monitorler ayni satir
         // bicimiyle gosterilir; lokasyon satirinda uye devreler ve adresleri
         // yer almaz — public sayfada sube IP'leri gorunmemeli.
-        setMonitors([
-          ...(res.data.groups || []).map((g: any) => ({ ...g, kind: 'location' })),
-          ...(res.data.monitors || []).map((m: any) => ({ ...m, kind: 'monitor' }))
-        ]);
-      } catch (err) {
-        console.error('Error fetching public status page:', err);
+        applyPageData(res.data);
+      } catch (err: any) {
+        if (err.response?.status === 401 && err.response?.data?.protected) {
+          // Suresi dolmus bir jeton varsa temizle, sifre ekranini goster.
+          try { localStorage.removeItem(tokenKey); } catch {}
+          setLocked(err.response.data);
+        } else {
+          console.error('Error fetching public status page:', err);
+        }
       } finally {
         setLoading(false);
       }
@@ -68,6 +119,46 @@ export default function StatusPage() {
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
           className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full"
         />
+      </div>
+    );
+  }
+
+  // Sifre ekrani: icerik sunucudan hic gelmedigi icin burada gosterecek
+  // monitor, durum veya gecmis yok — yalnizca baslik ve sifre alani.
+  if (locked) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md bg-zinc-900/60 border border-zinc-800 rounded-[2.5rem] p-10"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <Lock className="w-5 h-5 text-orange-500" />
+            <h1 className="text-2xl font-black">{locked.title || t('status_page.protected_title')}</h1>
+          </div>
+          <p className="text-sm text-zinc-500 mb-8">{t('status_page.protected_desc')}</p>
+
+          <form onSubmit={handleUnlock} className="space-y-4">
+            <input
+              type="password"
+              autoFocus
+              autoComplete="current-password"
+              placeholder={t('status_page.password_placeholder')}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+            />
+            {unlockError && <p className="text-sm text-red-400">{unlockError}</p>}
+            <button
+              type="submit"
+              disabled={unlocking || !password}
+              className="w-full bg-white text-zinc-950 px-6 py-4 rounded-2xl font-bold text-sm disabled:opacity-40 transition-opacity"
+            >
+              {unlocking ? t('common.loading') : t('status_page.unlock')}
+            </button>
+          </form>
+        </motion.div>
       </div>
     );
   }
@@ -198,6 +289,23 @@ export default function StatusPage() {
                     }`} />
                   </div>
                 </div>
+
+                {/* Lokasyon uyeleri — sayfa bunu acikca istiyorsa. Yalnizca ad
+                    ve durum; adres hicbir zaman gonderilmiyor. */}
+                {monitor.kind === 'location' && monitor.members && monitor.members.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-[4.5rem]">
+                    {monitor.members.map((member: any) => (
+                      <div key={member.id} className="flex items-center gap-3 text-sm">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${
+                          member.status === 'paused' ? 'bg-zinc-700' :
+                          member.currentStatus === 'up' ? 'bg-emerald-500' :
+                          member.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
+                        }`} />
+                        <span className="text-zinc-400 truncate">{member.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Bottom Row: Uptime History Bar */}
                 {monitor.history && (

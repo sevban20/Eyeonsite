@@ -417,7 +417,13 @@
     "no_monitors": "No monitors configured for this workspace.",
     "circuits": "{count} circuits",
     "partial_outage": "Partial Outage",
-    "no_data": "No data"
+    "no_data": "No data",
+    "protected_title": "Protected Status Page",
+    "protected_desc": "A password is required to view this page.",
+    "password_placeholder": "Password",
+    "unlock": "Unlock",
+    "wrong_password": "Incorrect password.",
+    "unlock_failed": "Could not unlock, please try again."
   },
   "status_pages": {
     "public_access": "Public Access",
@@ -443,7 +449,16 @@
     "total": "Total",
     "included_locations": "Included Locations",
     "included_locations_desc": "Adding a location shows that group as a single summarised row; individual circuits and their addresses are never published. Monitors you add to the group later are included automatically.",
-    "no_groups": "No groups yet"
+    "no_groups": "No groups yet",
+    "access": "Access & Visibility",
+    "show_members": "Show the services inside each location",
+    "show_members_desc": "Lists the group's services with their names and statuses under each location row. Addresses (IP/hostname) are never published.",
+    "password_set": "Password (optional)",
+    "password_change": "New Password",
+    "password_keep": "Leave empty to keep current",
+    "password_placeholder": "At least 8 characters",
+    "password_desc": "With a password set, the page opens only to people who know it; until it is entered the server sends no service names or statuses at all.",
+    "password_remove": "Remove password protection"
   },
   "pricing": {
     "badge": "Simple Pricing",

@@ -192,6 +192,17 @@ model PublicStatusPage {
   // gorunur. Monitor ID'lerine acilan bir anlik goruntu olsaydi her yeni sube
   // icin sayfanin elle guncellenmesi gerekirdi.
   groups      MonitorGroup[] // Implicit Many-to-Many
+
+  // Faz 2.4: sifre korumali durum sayfasi. Sadece bcrypt ozeti saklanir ve
+  // hicbir API yanitinda yer almaz. null = sayfa herkese acik.
+  passwordHash String?
+
+  // Lokasyon satirlarinin altinda uye servislerin de listelenip
+  // listelenmeyecegi. Varsayilan kapali: mevcut herkese acik sayfalarin
+  // davranisi degismesin, sube devrelerinin adlari istenmeden yayinlanmasin.
+  // Adresler (url) her halukarda public ciktida yok.
+  showGroupMembers Boolean @default(false)
+
   createdAt   DateTime  @default(now())
 }
 

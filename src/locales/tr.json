@@ -420,7 +420,13 @@
     "no_monitors": "Bu çalışma alanı için yapılandırılmış monitör bulunmuyor.",
     "circuits": "{count} devre",
     "partial_outage": "Kısmi Kesinti",
-    "no_data": "Veri yok"
+    "no_data": "Veri yok",
+    "protected_title": "Korumalı Durum Sayfası",
+    "protected_desc": "Bu sayfayı görüntülemek için şifre gerekiyor.",
+    "password_placeholder": "Şifre",
+    "unlock": "Giriş",
+    "wrong_password": "Şifre hatalı.",
+    "unlock_failed": "Giriş yapılamadı, tekrar dene."
   },
   "status_pages": {
     "public_access": "Halka Açık Erişim",
@@ -446,7 +452,16 @@
     "total": "Toplam",
     "included_locations": "Dahil Edilen Lokasyonlar",
     "included_locations_desc": "Bir lokasyon eklediğinde o gruptaki devreler tek satırda özetlenir; devre adları ve IP'leri sayfada görünmez. Gruba sonradan eklediğin devreler otomatik olarak kapsama girer.",
-    "no_groups": "Henüz grup yok"
+    "no_groups": "Henüz grup yok",
+    "access": "Erişim ve Görünüm",
+    "show_members": "Lokasyonların altındaki servisleri göster",
+    "show_members_desc": "Her lokasyon satırının altında o gruptaki servisler ad ve durumlarıyla listelenir. Adresler (IP/alan adı) hiçbir durumda yayınlanmaz.",
+    "password_set": "Şifre (isteğe bağlı)",
+    "password_change": "Yeni Şifre",
+    "password_keep": "Değiştirmemek için boş bırak",
+    "password_placeholder": "En az 8 karakter",
+    "password_desc": "Şifre tanımlarsan sayfa yalnızca şifreyi bilenlere açılır; şifre girilene kadar sunucu hiçbir servis adı veya durum bilgisi göndermez.",
+    "password_remove": "Şifre korumasını kaldır"
   },
   "pricing": {
     "badge": "Basit Fiyatlandırma",

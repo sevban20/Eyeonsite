@@ -96,7 +96,11 @@ export const statusPageBaseSchema = z.object({
   // Lokasyon (grup) baglari. monitorIds ile ayni tuzak gecerli: update
   // semasinda .default([]) OLMAMALI, yoksa yalnizca basligi degistiren bir PUT
   // sayfadaki tum gruplari koparir.
-  groupIds: z.array(z.string().uuid()).max(200).optional()
+  groupIds: z.array(z.string().uuid()).max(200).optional(),
+  showGroupMembers: z.boolean().optional(),
+  // Sifre: bos string "korumayi kaldir" demek, bu yuzden min(8) yalnizca dolu
+  // degerlere uygulanir. undefined ise mevcut sifreye dokunulmaz.
+  password: z.union([z.literal(''), z.string().min(8).max(128)]).optional()
 });
 export const statusPageCreateSchema = z.object({ workspaceId: z.string().uuid() }).extend(statusPageBaseSchema.shape).extend({
   monitorIds: z.array(z.string().uuid()).max(200).default([]),
