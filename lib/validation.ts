@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidStatusCodeSpec } from './http-status';
 
 // --- INPUT VALIDATION SCHEMAS ---
 //
@@ -45,6 +46,9 @@ export const monitorBaseSchema = z.object({
   monitorType: monitorTypeEnum.optional(),
   port: z.number().int().min(1).max(65535).optional().nullable(),
   expectedKeyword: z.string().max(500).optional().nullable(),
+  acceptedStatusCodes: z.string().max(200)
+    .refine(isValidStatusCodeSpec, 'Use codes or ranges, e.g. "200-299,404"')
+    .optional().nullable(),
   customHeaders: z.string().max(4000).optional().nullable(),
   heartbeatGrace: z.number().int().min(0).max(1440).optional(),
   groupId: z.string().uuid().optional().nullable()

@@ -405,7 +405,9 @@
     "ssl_check_enabled": "SSL sertifikasını takip et",
     "ssl_check_enabled_desc": "Sertifikanın geçerliliğini ve bitiş tarihini her kontrolde doğrular. Yalnızca HTTPS adresleri için anlamlıdır.",
     "heartbeat_grace": "Tolerans Süresi (dakika)",
-    "heartbeat_grace_desc": "Beklenen heartbeat gelmediğinde alarm üretilmeden önce bu kadar beklenir."
+    "heartbeat_grace_desc": "Beklenen heartbeat gelmediğinde alarm üretilmeden önce bu kadar beklenir.",
+    "accepted_status_codes": "Kabul Edilen Durum Kodları (İsteğe Bağlı)",
+    "accepted_status_codes_desc": "Boş bırakılırsa 400'ün altındaki her kod başarılı sayılır. Sağlık kontrolü ucu olmayan ve kökünde 404 dönen servisler için \"200-299,404\" yazabilirsin. Tek kod ya da aralık, virgülle ayrılır."
   },
   "status_page": {
     "powered_by": "Altyapı",

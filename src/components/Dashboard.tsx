@@ -196,7 +196,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
   const [monitorGroups, setMonitorGroups] = useState<any[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
-  const [newMonitor, setNewMonitor] = useState({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', interval: 60, method: 'GET', groupId: '' });
+  const [newMonitor, setNewMonitor] = useState({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', acceptedStatusCodes: '', interval: 60, method: 'GET', groupId: '' });
   const [newGroup, setNewGroup] = useState({ name: '', color: '#f97316' });
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   // Faz 3.5: lokasyon (composite) alarm ayarlari duzenlenen grup
@@ -275,7 +275,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
 
       await api.post('/monitors', payload);
       setShowAddModal(false);
-      setNewMonitor({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', interval: 60, method: 'GET', groupId: '' });
+      setNewMonitor({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', acceptedStatusCodes: '', interval: 60, method: 'GET', groupId: '' });
       toast.success('Monitor created successfully');
     } catch (error) {
       console.error('Error adding monitor:', error);
@@ -920,6 +920,17 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                           value={newMonitor.expectedKeyword}
                           onChange={e => setNewMonitor({...newMonitor, expectedKeyword: e.target.value})}
                         />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{t('monitor.accepted_status_codes')}</label>
+                        <input
+                          type="text"
+                          placeholder="200-299,404"
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-mono"
+                          value={newMonitor.acceptedStatusCodes}
+                          onChange={e => setNewMonitor({...newMonitor, acceptedStatusCodes: e.target.value})}
+                        />
+                        <p className="text-xs text-zinc-500 mt-2 ml-1">{t('monitor.accepted_status_codes_desc')}</p>
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{t('dashboard.custom_headers')}</label>

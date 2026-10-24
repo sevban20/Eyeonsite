@@ -111,6 +111,10 @@ model Monitor {
   url           String?   // Optional for TCP, optional for Heartbeat
   port          Int?      // For TCP monitors
   expectedKeyword String? // For HTTP assertion
+  // Basarili sayilacak HTTP durum kodlari, orn. "200-299,404". Bos/null ise
+  // varsayilan davranis gecerli: 400'un altindaki her kod basarili. Saglik
+  // kontrolu ucu olmayan ve kokunde 404 donen servisler icin.
+  acceptedStatusCodes String?
   customHeaders String?   // For HTTP API checks (JSON string)
   heartbeatGrace Int      @default(5) // Grace period in minutes for HEARTBEAT
   method        String    @default("GET")

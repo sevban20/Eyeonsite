@@ -19,6 +19,7 @@ import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { isPrivateIp, resolveTargetIp } from './lib/security';
 import { checkSSL, checkDNS, checkTCP } from './lib/network-checks';
+import { isStatusAccepted } from './lib/http-status';
 import {
   monitorCreateSchema, monitorUpdateSchema,
   statusPageCreateSchema, statusPageUpdateSchema,
@@ -2196,7 +2197,9 @@ async function startServer() {
         });
         responseTime = Date.now() - start;
         statusCode = res.status;
-        if (res.status >= 400) { status = 0; errorMessage = `HTTP ${res.status}`; }
+        // Kabul edilen kodlar monitor basina ayarlanabilir; tanimli degilse
+        // eski davranis: 400'un altindaki her kod basarili.
+        if (!isStatusAccepted(res.status, monitor.acceptedStatusCodes)) { status = 0; errorMessage = `HTTP ${res.status}`; }
         else if (monitor.responseTimeThreshold && responseTime > monitor.responseTimeThreshold) { status = 2; errorMessage = `Slow: ${responseTime}ms > ${monitor.responseTimeThreshold}ms`; }
         else if (monitor.expectedKeyword && typeof res.data === 'string' && !res.data.includes(monitor.expectedKeyword)) {
            status = 0; errorMessage = `Keyword missing: ${monitor.expectedKeyword}`;

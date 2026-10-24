@@ -40,6 +40,7 @@ export default function MonitorDetail({ user, workspace }: any) {
     notifyOnDegraded: false,
     expectedKeyword: '',
     customHeaders: '',
+    acceptedStatusCodes: '',
     sslCheckEnabled: true,
     heartbeatGrace: 5,
     alertEmail: '',
@@ -101,6 +102,7 @@ export default function MonitorDetail({ user, workspace }: any) {
         method: monitor.method || 'GET',
         expectedKeyword: monitor.expectedKeyword || '',
         customHeaders: monitor.customHeaders || '',
+        acceptedStatusCodes: monitor.acceptedStatusCodes || '',
         sslCheckEnabled: monitor.sslCheckEnabled ?? true,
         heartbeatGrace: monitor.heartbeatGrace ?? 5,
         interval: monitor.interval || 60,
@@ -1240,6 +1242,18 @@ export default function MonitorDetail({ user, workspace }: any) {
                                 onChange={e => setSettings({ ...settings, expectedKeyword: e.target.value })}
                               />
                               <p className="text-xs text-zinc-500">{t('monitor.expected_keyword_desc')}</p>
+                            </div>
+
+                            <div className="space-y-4">
+                              <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.accepted_status_codes')}</label>
+                              <input
+                                type="text"
+                                placeholder="200-299,404"
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-mono"
+                                value={settings.acceptedStatusCodes}
+                                onChange={e => setSettings({ ...settings, acceptedStatusCodes: e.target.value })}
+                              />
+                              <p className="text-xs text-zinc-500">{t('monitor.accepted_status_codes_desc')}</p>
                             </div>
 
                             <div className="space-y-4">

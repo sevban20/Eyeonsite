@@ -402,7 +402,9 @@
     "ssl_check_enabled": "Track SSL certificate",
     "ssl_check_enabled_desc": "Verifies certificate validity and expiry on every check. Only meaningful for HTTPS targets.",
     "heartbeat_grace": "Grace Period (minutes)",
-    "heartbeat_grace_desc": "How long to wait after a missed heartbeat before raising an alert."
+    "heartbeat_grace_desc": "How long to wait after a missed heartbeat before raising an alert.",
+    "accepted_status_codes": "Accepted Status Codes (optional)",
+    "accepted_status_codes_desc": "Leave empty to treat anything below 400 as healthy. For services with no health endpoint that return 404 at the root, use \"200-299,404\". Single codes or ranges, comma separated."
   },
   "status_page": {
     "powered_by": "Powered by",
