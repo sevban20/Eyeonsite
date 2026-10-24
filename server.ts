@@ -1630,6 +1630,12 @@ async function startServer() {
     return count === monitorIds.length;
   };
 
+  const verifyGroupsInWorkspace = async (groupIds: string[], workspaceId: string) => {
+    if (!groupIds.length) return true;
+    const count = await prisma.monitorGroup.count({ where: { id: { in: groupIds }, workspaceId } });
+    return count === groupIds.length;
+  };
+
   app.get('/api/status-pages', authenticateToken, async (req: any, res) => {
     try {
       const workspaceId = req.query.workspaceId as string;
@@ -1637,7 +1643,7 @@ async function startServer() {
       const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
-      const pages = await prisma.publicStatusPage.findMany({ where: { workspaceId }, include: { monitors: true } });
+      const pages = await prisma.publicStatusPage.findMany({ where: { workspaceId }, include: { monitors: true, groups: true } });
       res.json(pages);
     } catch (e: any) { serverError(res, e); }
   });
@@ -1646,20 +1652,24 @@ async function startServer() {
     try {
       const parsed = statusPageCreateSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-      const { workspaceId, title, description, slug, monitorIds } = parsed.data;
+      const { workspaceId, title, description, slug, monitorIds, groupIds } = parsed.data;
 
       const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
       if (!(await verifyMonitorsInWorkspace(monitorIds, workspaceId))) {
         return res.status(400).json({ error: 'One or more monitors do not belong to this workspace' });
       }
+      if (!(await verifyGroupsInWorkspace(groupIds, workspaceId))) {
+        return res.status(400).json({ error: 'One or more groups do not belong to this workspace' });
+      }
 
       const page = await prisma.publicStatusPage.create({
         data: {
           workspaceId, title, description, slug,
-          monitors: { connect: monitorIds.map((id: string) => ({ id })) }
+          monitors: { connect: monitorIds.map((id: string) => ({ id })) },
+          groups: { connect: groupIds.map((id: string) => ({ id })) }
         },
-        include: { monitors: true }
+        include: { monitors: true, groups: true }
       });
       await logAudit({ userId: req.user.id, workspaceId, action: 'statuspage.create', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: { slug } });
       res.json(page);
@@ -1678,18 +1688,22 @@ async function startServer() {
 
       const parsed = statusPageUpdateSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-      const { title, description, slug, monitorIds } = parsed.data;
+      const { title, description, slug, monitorIds, groupIds } = parsed.data;
       if (monitorIds && !(await verifyMonitorsInWorkspace(monitorIds, existing.workspaceId))) {
         return res.status(400).json({ error: 'One or more monitors do not belong to this workspace' });
+      }
+      if (groupIds && !(await verifyGroupsInWorkspace(groupIds, existing.workspaceId))) {
+        return res.status(400).json({ error: 'One or more groups do not belong to this workspace' });
       }
 
       const page = await prisma.publicStatusPage.update({
         where: { id: req.params.id },
         data: {
           title, description, slug,
-          ...(monitorIds ? { monitors: { set: monitorIds.map((id: string) => ({ id })) } } : {})
+          ...(monitorIds ? { monitors: { set: monitorIds.map((id: string) => ({ id })) } } : {}),
+          ...(groupIds ? { groups: { set: groupIds.map((id: string) => ({ id })) } } : {})
         },
-        include: { monitors: true }
+        include: { monitors: true, groups: true }
       });
       await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'statuspage.update', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: parsed.data });
       res.json(page);
@@ -1716,16 +1730,46 @@ async function startServer() {
     try {
       const page = await prisma.publicStatusPage.findUnique({
         where: { slug: req.params.slug },
-        include: { monitors: { select: { id: true, name: true, currentStatus: true, interval: true, url: true, status: true } } }
+        include: {
+          // url BILEREK yok: bu uc kimlik dogrulamasiz ve StatusPage.tsx alani
+          // ekranda gosteriyordu — sube monitorleri eklenince her subenin WAN
+          // IP'si herkese acik yayinlanmis olurdu.
+          monitors: { select: { id: true, name: true, currentStatus: true, interval: true, status: true } },
+          groups: {
+            select: {
+              id: true, name: true, color: true, degradedThreshold: true,
+              monitors: { select: { id: true, name: true, currentStatus: true, status: true } }
+            }
+          }
+        }
       });
       if (!page) return res.status(404).json({ error: 'Not found' });
 
-      const monitorIds = page.monitors.map(m => m.id);
-      
-      if (monitorIds.length > 0) {
+      // Durum sayfasi iki tur ogeden olusabilir: tek tek secilmis monitorler ve
+      // LOKASYONLAR (gruplar). Lokasyonlar tek satir halinde ozetlenir; uye
+      // devreler ve adresleri public ciktida HIC yer almaz. Sube WAN IP'lerini
+      // herkese acik bir sayfada yayinlamak istemiyoruz.
+      const groupMembers = page.groups.flatMap((g: any) => g.monitors);
+      const allIds = [...new Set([
+        ...page.monitors.map((m: any) => m.id),
+        ...groupMembers.map((m: any) => m.id)
+      ])];
+
+      const historyDays = 90;
+      const dates: string[] = [];
+      for (let i = historyDays - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setUTCHours(0, 0, 0, 0);
+        d.setUTCDate(d.getUTCDate() - i);
+        dates.push(d.toISOString().split('T')[0]);
+      }
+
+      const monitorHistoryMap: Record<string, Record<string, { total: number, down: number, degraded: number }>> = {};
+
+      if (allIds.length > 0) {
         const cutoffDate = new Date();
         cutoffDate.setUTCHours(0, 0, 0, 0);
-        cutoffDate.setUTCDate(cutoffDate.getUTCDate() - 90);
+        cutoffDate.setUTCDate(cutoffDate.getUTCDate() - historyDays);
 
         const results = await prisma.$queryRaw<any[]>`
           SELECT 
@@ -1735,83 +1779,83 @@ async function startServer() {
             sum(case when status = 0 then 1 else 0 end)::integer AS down,
             sum(case when status = 2 then 1 else 0 end)::integer AS degraded
           FROM "PingLog"
-          WHERE "monitorId" IN (${Prisma.join(monitorIds)})
+          WHERE "monitorId" IN (${Prisma.join(allIds)})
             AND timestamp >= ${cutoffDate}
           GROUP BY "monitorId", day
           ORDER BY day ASC
         `;
 
-        // Generate the last 90 days of date strings in UTC "YYYY-MM-DD"
-        const historyDays = 90;
-        const dates: string[] = [];
-        for (let i = historyDays - 1; i >= 0; i--) {
-          const d = new Date();
-          d.setUTCHours(0, 0, 0, 0);
-          d.setUTCDate(d.getUTCDate() - i);
-          dates.push(d.toISOString().split('T')[0]);
-        }
-
-        // Map results by monitor and day
-        const monitorHistoryMap: Record<string, Record<string, { total: number, down: number, degraded: number }>> = {};
         for (const row of results) {
-          const mId = row.monitorId;
           const dayStr = new Date(row.day).toISOString().split('T')[0];
-          if (!monitorHistoryMap[mId]) {
-            monitorHistoryMap[mId] = {};
-          }
-          monitorHistoryMap[mId][dayStr] = {
-            total: row.total,
-            down: row.down,
-            degraded: row.degraded
-          };
-        }
-
-        // Attach history to each monitor
-        for (const monitor of page.monitors) {
-          const history = dates.map(dateStr => {
-            const dayData = monitorHistoryMap[monitor.id]?.[dateStr];
-            if (!dayData || dayData.total === 0) {
-              return {
-                date: dateStr,
-                uptime: -1,
-                status: 'nodata',
-                down: 0
-              };
-            }
-            const { total, down, degraded } = dayData;
-            const uptime = parseFloat(((total - down) / total * 100).toFixed(2));
-            
-            let status = 'up';
-            if (down > 0) {
-              if (down / total > 0.1) {
-                status = 'down';
-              } else {
-                status = 'partial_down';
-              }
-            } else if (degraded > 0) {
-              status = 'degraded';
-            }
-            
-            return {
-              date: dateStr,
-              uptime,
-              status,
-              down
-            };
-          });
-
-          // Calculate average uptime (excluding nodata)
-          const validHistory = history.filter(h => h.uptime > -1);
-          const avgUptime = validHistory.length > 0
-            ? parseFloat((validHistory.reduce((acc, curr) => acc + curr.uptime, 0) / validHistory.length).toFixed(2))
-            : 100;
-
-          (monitor as any).history = history;
-          (monitor as any).avgUptime = avgUptime;
+          if (!monitorHistoryMap[row.monitorId]) monitorHistoryMap[row.monitorId] = {};
+          monitorHistoryMap[row.monitorId][dayStr] = { total: row.total, down: row.down, degraded: row.degraded };
         }
       }
 
-      res.json(page);
+      const dayStatus = (total: number, down: number, degraded: number) => {
+        if (down > 0) return down / total > 0.1 ? 'down' : 'partial_down';
+        return degraded > 0 ? 'degraded' : 'up';
+      };
+
+      const avgOf = (history: any[]) => {
+        const valid = history.filter(h => h.uptime > -1);
+        return valid.length > 0
+          ? parseFloat((valid.reduce((acc, curr) => acc + curr.uptime, 0) / valid.length).toFixed(2))
+          : 100;
+      };
+
+      // --- tek tek secilmis monitorler ---
+      for (const monitor of page.monitors) {
+        const history = dates.map(dateStr => {
+          const d = monitorHistoryMap[monitor.id]?.[dateStr];
+          if (!d || d.total === 0) return { date: dateStr, uptime: -1, status: 'nodata', down: 0 };
+          const uptime = parseFloat(((d.total - d.down) / d.total * 100).toFixed(2));
+          return { date: dateStr, uptime, status: dayStatus(d.total, d.down, d.degraded), down: d.down };
+        });
+        (monitor as any).history = history;
+        (monitor as any).avgUptime = avgOf(history);
+      }
+
+      // --- lokasyonlar ---
+      // Gunluk durum uyelerin EN IYISINDEN turetilir: devreler yedekli oldugu
+      // icin lokasyon ancak tum devreler duserse "down" sayilir, bir kismi
+      // duserse "kismi kesinti"dir. Anlik durum ise lib/composite.ts'teki
+      // ayni fonksiyondan gelir, boylece panodaki rozetle birebir tutar.
+      const groupSummaries = page.groups.map((g: any) => {
+        const members = g.monitors || [];
+        const history = dates.map(dateStr => {
+          const dayRows = members
+            .map((m: any) => monitorHistoryMap[m.id]?.[dateStr])
+            .filter((d: any) => d && d.total > 0);
+          if (dayRows.length === 0) return { date: dateStr, uptime: -1, status: 'nodata', down: 0 };
+
+          const uptimes = dayRows.map((d: any) => (d.total - d.down) / d.total * 100);
+          const uptime = parseFloat(Math.max(...uptimes).toFixed(2));
+          const totalDown = dayRows.reduce((a: number, d: any) => a + d.down, 0);
+          const allDown = dayRows.every((d: any) => d.down / d.total > 0.1);
+          const anyDown = dayRows.some((d: any) => d.down > 0);
+          const anyDegraded = dayRows.some((d: any) => d.degraded > 0);
+
+          let status = 'up';
+          if (allDown) status = 'down';
+          else if (anyDown) status = 'partial_down';
+          else if (anyDegraded) status = 'degraded';
+
+          return { date: dateStr, uptime, status, down: totalDown };
+        });
+
+        return {
+          id: g.id,
+          name: g.name,
+          color: g.color,
+          memberCount: members.length,
+          currentStatus: evaluateGroupStatus(members, g.degradedThreshold) || 'nodata',
+          history,
+          avgUptime: avgOf(history)
+        };
+      });
+
+      res.json({ ...page, groups: groupSummaries });
     } catch (e: any) { 
       serverError(res, e);
     }

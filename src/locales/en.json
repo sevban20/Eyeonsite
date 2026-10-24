@@ -414,7 +414,10 @@
     "operational": "Operational",
     "degraded": "Degraded",
     "down": "Down",
-    "no_monitors": "No monitors configured for this workspace."
+    "no_monitors": "No monitors configured for this workspace.",
+    "circuits": "{count} circuits",
+    "partial_outage": "Partial Outage",
+    "no_data": "No data"
   },
   "status_pages": {
     "public_access": "Public Access",
@@ -437,7 +440,10 @@
     "system_status": "System Status",
     "investigating_issues": "We are currently investigating issues with some of our services. Our team is working to restore full functionality.",
     "normal_parameters": "All monitored services are performing within normal parameters. No issues detected in the last 24 hours.",
-    "total": "Total"
+    "total": "Total",
+    "included_locations": "Included Locations",
+    "included_locations_desc": "Adding a location shows that group as a single summarised row; individual circuits and their addresses are never published. Monitors you add to the group later are included automatically.",
+    "no_groups": "No groups yet"
   },
   "pricing": {
     "badge": "Simple Pricing",

@@ -92,10 +92,15 @@ export const statusPageBaseSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().max(500).optional().nullable(),
   slug: z.string().regex(/^[A-Za-z0-9-]{1,64}$/, 'Slug may only contain letters, numbers and hyphens (max 64)'),
-  monitorIds: z.array(z.string().uuid()).max(200).optional()
+  monitorIds: z.array(z.string().uuid()).max(200).optional(),
+  // Lokasyon (grup) baglari. monitorIds ile ayni tuzak gecerli: update
+  // semasinda .default([]) OLMAMALI, yoksa yalnizca basligi degistiren bir PUT
+  // sayfadaki tum gruplari koparir.
+  groupIds: z.array(z.string().uuid()).max(200).optional()
 });
 export const statusPageCreateSchema = z.object({ workspaceId: z.string().uuid() }).extend(statusPageBaseSchema.shape).extend({
-  monitorIds: z.array(z.string().uuid()).max(200).default([])
+  monitorIds: z.array(z.string().uuid()).max(200).default([]),
+  groupIds: z.array(z.string().uuid()).max(200).default([])
 });
 export const statusPageUpdateSchema = statusPageBaseSchema.partial();
 

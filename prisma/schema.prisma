@@ -83,6 +83,7 @@ model MonitorGroup {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   monitors    Monitor[]
+  statusPages PublicStatusPage[] // Implicit Many-to-Many
   createdAt   DateTime  @default(now())
 
   // --- Faz 3.5: lokasyon (composite) alarmi ---
@@ -185,6 +186,12 @@ model PublicStatusPage {
   themeColor  String    @default("#f97316") // Orange-500 default
   logoUrl     String?
   monitors    Monitor[] // Implicit Many-to-Many
+
+  // Faz 3.5 devami: durum sayfasina monitor yerine LOKASYON (grup) eklenebilir.
+  // Bag canli tutulur — gruba sonradan eklenen monitor sayfada kendiliginden
+  // gorunur. Monitor ID'lerine acilan bir anlik goruntu olsaydi her yeni sube
+  // icin sayfanin elle guncellenmesi gerekirdi.
+  groups      MonitorGroup[] // Implicit Many-to-Many
   createdAt   DateTime  @default(now())
 }
 

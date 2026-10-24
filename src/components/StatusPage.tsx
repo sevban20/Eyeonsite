@@ -20,7 +20,13 @@ export default function StatusPage() {
       try {
         const res = await api.get(`/public-status/${slug}`);
         setStatusPage(res.data);
-        setMonitors(res.data.monitors || []);
+        // Lokasyonlar (gruplar) ve tek tek secilmis monitorler ayni satir
+        // bicimiyle gosterilir; lokasyon satirinda uye devreler ve adresleri
+        // yer almaz — public sayfada sube IP'leri gorunmemeli.
+        setMonitors([
+          ...(res.data.groups || []).map((g: any) => ({ ...g, kind: 'location' })),
+          ...(res.data.monitors || []).map((m: any) => ({ ...m, kind: 'monitor' }))
+        ]);
       } catch (err) {
         console.error('Error fetching public status page:', err);
       } finally {
@@ -163,19 +169,32 @@ export default function StatusPage() {
                     </div>
                     <div>
                       <span className="font-black text-xl text-white block mb-1">{monitor.name}</span>
-                      <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{monitor.url}</span>
+                      {monitor.kind === 'location' && (
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">
+                          {t('status_page.circuits').replace('{count}', String(monitor.memberCount ?? 0))}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-4 self-end sm:self-auto">
                     <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] ${
                       monitor.status === 'paused' ? 'bg-zinc-800 text-zinc-500' :
-                      monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                      monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
+                      monitor.currentStatus === 'degraded' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' :
+                      monitor.currentStatus === 'nodata' ? 'bg-zinc-800 text-zinc-500' :
+                      'bg-red-500/10 text-red-500 border border-red-500/20'
                     }`}>
-                      {monitor.status === 'paused' ? t('dashboard.paused').toUpperCase() : monitor.currentStatus === 'up' ? t('status_page.operational').toUpperCase() : monitor.currentStatus === 'degraded' ? t('status_page.degraded').toUpperCase() : t('status_page.down').toUpperCase()}
+                      {monitor.status === 'paused' ? t('dashboard.paused').toUpperCase() :
+                       monitor.currentStatus === 'up' ? t('status_page.operational').toUpperCase() :
+                       monitor.currentStatus === 'degraded' ? (monitor.kind === 'location' ? t('status_page.partial_outage') : t('status_page.degraded')).toUpperCase() :
+                       monitor.currentStatus === 'nodata' ? t('status_page.no_data').toUpperCase() :
+                       t('status_page.down').toUpperCase()}
                     </div>
                     <div className={`w-3 h-3 rounded-full shadow-lg ${
-                      monitor.status === 'paused' ? 'bg-zinc-700' :
-                      monitor.currentStatus === 'up' ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-red-500 shadow-red-500/20'
+                      monitor.status === 'paused' || monitor.currentStatus === 'nodata' ? 'bg-zinc-700' :
+                      monitor.currentStatus === 'up' ? 'bg-emerald-500 shadow-emerald-500/20' :
+                      monitor.currentStatus === 'degraded' ? 'bg-amber-500 shadow-amber-500/20' :
+                      'bg-red-500 shadow-red-500/20'
                     }`} />
                   </div>
                 </div>

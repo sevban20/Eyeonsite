@@ -10,6 +10,7 @@ export default function StatusPagesList({ workspace }: any) {
   const { t } = useTranslation();
   const [pages, setPages] = useState<any[]>([]);
   const [monitors, setMonitors] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -18,19 +19,22 @@ export default function StatusPagesList({ workspace }: any) {
     description: '',
     slug: '',
     themeColor: '#f97316',
-    monitorIds: [] as string[]
+    monitorIds: [] as string[],
+    groupIds: [] as string[]
   });
 
   useEffect(() => {
     if (!workspace) return;
     const fetchData = async () => {
       try {
-        const [pagesRes, monitorsRes] = await Promise.all([
+        const [pagesRes, monitorsRes, groupsRes] = await Promise.all([
           api.get(`/status-pages?workspaceId=${workspace.id}`),
-          api.get(`/monitors?workspaceId=${workspace.id}`)
+          api.get(`/monitors?workspaceId=${workspace.id}`),
+          api.get(`/monitor-groups?workspaceId=${workspace.id}`)
         ]);
         setPages(pagesRes.data);
         setMonitors(monitorsRes.data);
+        setGroups(groupsRes.data);
       } catch (err) {
         console.error(err);
         toast.error('Failed to load status pages');
@@ -79,7 +83,8 @@ export default function StatusPagesList({ workspace }: any) {
       description: page.description || '',
       slug: page.slug,
       themeColor: page.themeColor || '#f97316',
-      monitorIds: page.monitors.map((m: any) => m.id)
+      monitorIds: page.monitors.map((m: any) => m.id),
+      groupIds: (page.groups || []).map((g: any) => g.id)
     });
     setShowModal(true);
   };
@@ -91,7 +96,8 @@ export default function StatusPagesList({ workspace }: any) {
       description: '',
       slug: Math.random().toString(36).substring(7),
       themeColor: '#f97316',
-      monitorIds: []
+      monitorIds: [],
+      groupIds: []
     });
     setShowModal(true);
   };
@@ -102,6 +108,15 @@ export default function StatusPagesList({ workspace }: any) {
       monitorIds: prev.monitorIds.includes(id) 
         ? prev.monitorIds.filter(m => m !== id)
         : [...prev.monitorIds, id]
+    }));
+  };
+
+  const toggleGroup = (id: string) => {
+    setFormData(prev => ({
+      ...prev,
+      groupIds: prev.groupIds.includes(id)
+        ? prev.groupIds.filter(g => g !== id)
+        : [...prev.groupIds, id]
     }));
   };
 
@@ -268,6 +283,39 @@ export default function StatusPagesList({ workspace }: any) {
                       onChange={e => setFormData({...formData, themeColor: e.target.value})}
                     />
                     <span className="text-zinc-500 font-mono text-sm">{formData.themeColor}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-6 border-t border-zinc-800">
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] ml-1">{t('status_pages.included_locations')}</label>
+                    <p className="text-xs text-zinc-500 mt-2 ml-1">{t('status_pages.included_locations_desc')}</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-2">
+                    {groups.map(group => (
+                      <div
+                        key={group.id}
+                        onClick={() => toggleGroup(group.id)}
+                        className={`p-4 rounded-xl border cursor-pointer transition-colors flex items-center gap-3 ${
+                          formData.groupIds.includes(group.id)
+                            ? 'bg-orange-500/10 border-orange-500/50 text-orange-500'
+                            : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-md flex items-center justify-center border ${
+                          formData.groupIds.includes(group.id)
+                            ? 'bg-orange-500 border-orange-500 text-white'
+                            : 'border-zinc-700'
+                        }`}>
+                          {formData.groupIds.includes(group.id) && <CheckCircle2 className="w-3 h-3" />}
+                        </div>
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: group.color }} />
+                        <span className="font-bold text-sm truncate">{group.name}</span>
+                      </div>
+                    ))}
+                    {groups.length === 0 && (
+                      <div className="col-span-2 text-center py-6 text-zinc-500 italic text-sm">{t('status_pages.no_groups')}</div>
+                    )}
                   </div>
                 </div>
 

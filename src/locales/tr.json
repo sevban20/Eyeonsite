@@ -417,7 +417,10 @@
     "operational": "Çalışıyor",
     "degraded": "Performans Sorunu",
     "down": "Çökmüş",
-    "no_monitors": "Bu çalışma alanı için yapılandırılmış monitör bulunmuyor."
+    "no_monitors": "Bu çalışma alanı için yapılandırılmış monitör bulunmuyor.",
+    "circuits": "{count} devre",
+    "partial_outage": "Kısmi Kesinti",
+    "no_data": "Veri yok"
   },
   "status_pages": {
     "public_access": "Halka Açık Erişim",
@@ -440,7 +443,10 @@
     "system_status": "Sistem Durumu",
     "investigating_issues": "Şu anda bazı hizmetlerimizdeki sorunları araştırıyoruz. Ekibimiz tam işlevselliği geri yüklemek için çalışıyor.",
     "normal_parameters": "Tüm izlenen hizmetler normal parametreler içinde çalışıyor. Son 24 saat içinde hiçbir sorun saptanmadı.",
-    "total": "Toplam"
+    "total": "Toplam",
+    "included_locations": "Dahil Edilen Lokasyonlar",
+    "included_locations_desc": "Bir lokasyon eklediğinde o gruptaki devreler tek satırda özetlenir; devre adları ve IP'leri sayfada görünmez. Gruba sonradan eklediğin devreler otomatik olarak kapsama girer.",
+    "no_groups": "Henüz grup yok"
   },
   "pricing": {
     "badge": "Basit Fiyatlandırma",
