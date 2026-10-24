@@ -43,7 +43,7 @@ export default function StatusPage() {
         try { localStorage.setItem(tokenKey, res.data.token); } catch {}
       }
       const page = await api.get(`/public-status/${slug}`, {
-        headers: res.data.token ? { Authorization: `Bearer ${res.data.token}` } : undefined
+        headers: res.data.token ? { 'X-Status-Page-Token': res.data.token } : undefined
       });
       applyPageData(page.data);
       setLocked(null);
@@ -65,7 +65,7 @@ export default function StatusPage() {
         let token: string | null = null;
         try { token = localStorage.getItem(tokenKey); } catch {}
         const res = await api.get(`/public-status/${slug}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+          headers: token ? { 'X-Status-Page-Token': token } : undefined
         });
         setStatusPage(res.data);
         // Lokasyonlar (gruplar) ve tek tek secilmis monitorler ayni satir

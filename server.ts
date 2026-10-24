@@ -1780,8 +1780,13 @@ async function startServer() {
   });
 
   const hasStatusPageAccess = (req: any, slug: string) => {
+    // Kendi basligini kullaniyor: oturum jetonuyla ayni yerde tasinirsa
+    // ikisinden biri digerini eziyor. Sorgu parametresi bilerek desteklenmiyor
+    // — jeton URL'de tasinirsa nginx erisim loglarina ve referrer basligina
+    // dusmus olur.
+    const dedicated = req.headers['x-status-page-token'];
     const header = req.headers['authorization'];
-    const raw = (header && header.split(' ')[1]) || req.query.token;
+    const raw = (typeof dedicated === 'string' && dedicated) || (header && header.split(' ')[1]);
     if (!raw || typeof raw !== 'string') return false;
     try {
       const payload: any = jwt.verify(raw, JWT_SECRET);
