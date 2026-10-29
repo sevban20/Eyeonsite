@@ -91,9 +91,11 @@ async function startServer() {
   app.use(express.json({ limit: '1mb' }));
 
   // Rate limiting
+  // Dashboard artik monitor basina degil toplu istek atiyor; yine de yuzlerce
+  // monitorlu hesaplarda (toplu ekleme scriptleri, cok sekme) 300 dar kaliyordu.
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 300,
+    max: parseInt(process.env.API_RATE_LIMIT_MAX || '1500'),
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => req.originalUrl.startsWith('/api/heartbeat/') // heartbeats ping frequently by design
@@ -1356,11 +1358,56 @@ async function startServer() {
     }
   });
 
+  // Dashboard mini gecmis cubuklari: workspace'teki TUM monitorlarin son 7 gunu
+  // tek istekte. Eskiden her kart /monitors/:id/history cagiriyordu; 600 monitor
+  // = 600 istek ve rate limit (429). Sorgu sayisi monitor sayisindan bagimsiz (14).
+  // NOT: /api/monitors/:id rotasindan ONCE tanimli kalmali.
+  app.get('/api/monitors/history-summary', authenticateToken, async (req: any, res) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+      const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
+      if (!ws) return res.status(403).json({ error: 'Forbidden' });
+
+      const monitors = await prisma.monitor.findMany({ where: { workspaceId }, select: { id: true } });
+      const result: Record<string, any[]> = {};
+      monitors.forEach((m: any) => { result[m.id] = []; });
+
+      const days = Array.from({ length: 7 }, (_, i) => 6 - i);
+      const perDay = await Promise.all(days.map(async (i) => {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        date.setHours(0, 0, 0, 0);
+        const nextDate = new Date(date);
+        nextDate.setDate(date.getDate() + 1);
+        const where = { monitor: { workspaceId }, timestamp: { gte: date, lt: nextDate } };
+        const [totals, downs] = await Promise.all([
+          prisma.pingLog.groupBy({ by: ['monitorId'], where, _count: { _all: true } }),
+          prisma.pingLog.groupBy({ by: ['monitorId'], where: { ...where, status: 0 }, _count: { _all: true } })
+        ]);
+        const totalMap = new Map(totals.map((r: any) => [r.monitorId, r._count._all]));
+        const downMap = new Map(downs.map((r: any) => [r.monitorId, r._count._all]));
+        return { i, date, totalMap, downMap };
+      }));
+
+      for (const { i, date, totalMap, downMap } of perDay) {
+        for (const id of Object.keys(result)) {
+          const total = (totalMap.get(id) as number) || 0;
+          const down = (downMap.get(id) as number) || 0;
+          result[id].push({ date, uptime: total > 0 ? ((total - down) / total) * 100 : -1, index: i });
+        }
+      }
+      res.json(result);
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
   app.put('/api/monitors/bulk/action', authenticateToken, async (req: any, res) => {
     try {
       const { ids, action } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No IDs provided' });
-      if (!['pause', 'resume', 'delete'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+      if (!['pause', 'resume', 'delete', 'move'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
       
       const userWorkspaces = await prisma.workspace.findMany({ 
         where: { 
@@ -1372,6 +1419,23 @@ async function startServer() {
       const ownedMonitors = await prisma.monitor.findMany({ where: { id: { in: ids }, workspaceId: { in: wsIds } }, select: { id: true } });
       const ownedIds = ownedMonitors.map((m: any) => m.id);
       if (ownedIds.length === 0) return res.status(403).json({ error: 'Forbidden' });
+      if (action === 'move') {
+        // Toplu grup tasima: eskiden monitor basina ayri PUT atiliyordu (600 secim = 600 istek).
+        const groupId = req.body.groupId ?? null;
+        if (groupId !== null && typeof groupId !== 'string') return res.status(400).json({ error: 'Invalid groupId' });
+        let targetIds = ownedIds;
+        if (groupId) {
+          const group = await prisma.monitorGroup.findUnique({ where: { id: groupId } });
+          if (!group || !wsIds.includes(group.workspaceId)) return res.status(404).json({ error: 'Group not found' });
+          // Grup yalnizca kendi workspace'indeki monitorlara atanabilir
+          const sameWs = await prisma.monitor.findMany({ where: { id: { in: ownedIds }, workspaceId: group.workspaceId }, select: { id: true } });
+          targetIds = sameWs.map((m: any) => m.id);
+        }
+        await prisma.monitor.updateMany({ where: { id: { in: targetIds } }, data: { groupId } });
+        const moved = await prisma.monitor.findMany({ where: { id: { in: targetIds } } });
+        moved.forEach((m: any) => emitMonitorUpdated(m));
+        return res.json({ success: true, count: targetIds.length });
+      }
       if (action === 'delete') {
         await prisma.monitor.deleteMany({ where: { id: { in: ownedIds } } });
         ownedIds.forEach((id: string) => emitMonitorDeleted(id));

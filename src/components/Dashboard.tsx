@@ -13,34 +13,10 @@ interface DashboardProps {
   workspace: any;
 }
 
-function MiniAvailabilityHistory({ monitorId }: { monitorId: string }) {
+function MiniAvailabilityHistory({ history: rawHistory }: { history?: any[] }) {
   const { t } = useTranslation();
-  const [history, setHistory] = useState<any[]>([]);
-
-  useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        const cacheKey = `mini_history_${monitorId}`;
-        const cached = sessionStorage.getItem(cacheKey);
-        if (cached) {
-          const { data, timestamp } = JSON.parse(cached);
-          if (Date.now() - timestamp < 1000 * 60 * 60) { // 1 hour cache
-            const parsedData = data.map((d: any) => ({ ...d, date: new Date(d.date) }));
-            setHistory(parsedData);
-            return;
-          }
-        }
-
-        const res = await api.get(`/monitors/${monitorId}/history`);
-        const results = res.data.map((d: any) => ({ ...d, date: new Date(d.date) }));
-        setHistory(results);
-        sessionStorage.setItem(cacheKey, JSON.stringify({ data: results, timestamp: Date.now() }));
-      } catch (err) {
-        console.error(err);
-      }
-    };
-    fetchHistory();
-  }, [monitorId]);
+  // Veri artik Dashboard'dan toplu geliyor (/monitors/history-summary).
+  const history = (rawHistory || []).map((d: any) => ({ ...d, date: new Date(d.date) }));
 
   return (
     <div className="hidden sm:flex items-center gap-1 h-6 w-24 mr-4">
@@ -66,7 +42,7 @@ function MiniAvailabilityHistory({ monitorId }: { monitorId: string }) {
   );
 }
 
-function MonitorCard({ monitor, selectedMonitors, toggleSelectMonitor, toggleStatus, deleteMonitor }: any) {
+function MonitorCard({ monitor, history, selectedMonitors, toggleSelectMonitor, toggleStatus, deleteMonitor }: any) {
   const { t } = useTranslation();
   return (
     <motion.div 
@@ -153,7 +129,7 @@ function MonitorCard({ monitor, selectedMonitors, toggleSelectMonitor, toggleSta
         </div>
 
         <div className="flex items-center gap-6">
-          <MiniAvailabilityHistory monitorId={monitor.id} />
+          <MiniAvailabilityHistory history={history} />
           <div className="hidden lg:flex flex-col items-end">
             <span className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mb-1">Last Check</span>
             <span className="text-[11px] font-medium text-zinc-400">
@@ -205,6 +181,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMonitors, setSelectedMonitors] = useState<string[]>([]);
+  const [historyMap, setHistoryMap] = useState<Record<string, any[]>>({});
   const [groupDropdownOpen, setGroupDropdownOpen] = useState<string | null>(null);
 
   useEffect(() => {
@@ -224,6 +201,26 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
         }
       };
       fetchMonitors();
+
+      // 7 gunluk mini gecmis: tum monitorlar icin TEK istek (5 dk onbellekli)
+      const fetchHistorySummary = async () => {
+        const cacheKey = `mini_history_ws_${workspace.id}`;
+        try {
+          const cached = sessionStorage.getItem(cacheKey);
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            if (Date.now() - timestamp < 5 * 60 * 1000) { setHistoryMap(data); return; }
+          }
+        } catch { /* bozuk/erisilemeyen onbellek: yeniden cek */ }
+        try {
+          const res = await api.get(`/monitors/history-summary?workspaceId=${workspace.id}`);
+          setHistoryMap(res.data);
+          try { sessionStorage.setItem(cacheKey, JSON.stringify({ data: res.data, timestamp: Date.now() })); } catch { /* kota dolu */ }
+        } catch (err) {
+          console.error('Error fetching history summary:', err);
+        }
+      };
+      fetchHistorySummary();
 
       // Socket.io listeners (authenticated — joins the workspace room)
       connectSocket(workspace.id);
@@ -384,7 +381,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
   const moveSelectedMonitorsToGroup = async (groupId: string | null) => {
     if (selectedMonitors.length === 0) return;
     try {
-      await Promise.all(selectedMonitors.map(id => api.put(`/monitors/${id}`, { groupId })));
+      await api.put('/monitors/bulk/action', { ids: selectedMonitors, action: 'move', groupId });
       setMonitors(prev => prev.map(m => selectedMonitors.includes(m.id) ? { ...m, groupId } : m));
       toast.success(`${selectedMonitors.length} monitors moved`);
       setSelectedMonitors([]);
@@ -747,6 +744,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                           <MonitorCard 
                             key={monitor.id} 
                             monitor={monitor} 
+                            history={historyMap[monitor.id]}
                             selectedMonitors={selectedMonitors}
                             toggleSelectMonitor={toggleSelectMonitor}
                             toggleStatus={toggleStatus}
@@ -785,6 +783,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                     <MonitorCard 
                       key={monitor.id} 
                       monitor={monitor} 
+                      history={historyMap[monitor.id]}
                       selectedMonitors={selectedMonitors}
                       toggleSelectMonitor={toggleSelectMonitor}
                       toggleStatus={toggleStatus}
