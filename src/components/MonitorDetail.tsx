@@ -214,33 +214,32 @@ export default function MonitorDetail({ user, workspace }: any) {
     fetchHistory();
     fetchMaintenanceWindows();
 
-    const handleMonitorUpdated = (updatedMonitor: any) => {
-      if (updatedMonitor.id === id) {
-        setMonitor(updatedMonitor);
-      }
+    // Sunucu guncellemeleri ~1 sn'lik paketler halinde gelir.
+    const handleMonitorsUpdated = (batch: any[]) => {
+      const mine = batch.find((m: any) => m.id === id);
+      if (mine) setMonitor(mine);
     };
 
-    const handlePingLog = (log: any) => {
-      if (log.monitorId === id) {
-        const newLog = {
-          ...log,
-          time: format(new Date(log.timestamp), 'HH:mm:ss'),
-          timestamp: new Date(log.timestamp)
-        };
-        setLogs(prev => {
-          const newLogs = [...prev, newLog];
-          if (newLogs.length > 50) return newLogs.slice(newLogs.length - 50);
-          return newLogs;
-        });
-      }
+    const handlePingLogs = (batch: any[]) => {
+      const mine = batch.filter((log: any) => log.monitorId === id);
+      if (mine.length === 0) return;
+      const newLogs = mine.map((log: any) => ({
+        ...log,
+        time: format(new Date(log.timestamp), 'HH:mm:ss'),
+        timestamp: new Date(log.timestamp)
+      }));
+      setLogs(prev => {
+        const merged = [...prev, ...newLogs];
+        return merged.length > 50 ? merged.slice(merged.length - 50) : merged;
+      });
     };
 
-    socket.on('monitor-updated', handleMonitorUpdated);
-    socket.on('ping-log', handlePingLog);
+    socket.on('monitors-updated', handleMonitorsUpdated);
+    socket.on('ping-logs', handlePingLogs);
 
     return () => {
-      socket.off('monitor-updated', handleMonitorUpdated);
-      socket.off('ping-log', handlePingLog);
+      socket.off('monitors-updated', handleMonitorsUpdated);
+      socket.off('ping-logs', handlePingLogs);
     };
   }, [id, navigate]);
 

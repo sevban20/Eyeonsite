@@ -1036,6 +1036,30 @@ async function startServer() {
     });
   });
 
+  // --- Durum sayfasi odalari ---
+  // Eskiden her kontrol sonucu io.emit ile BAGLI HERKESE gidiyordu: 600
+  // monitorde dakikada ~600 olay, giris yapmamis ziyaretcilere ve baska
+  // musterilerin tarayicilarina dahil. Artik durum sayfasi istemcisi
+  // 'join-status-page' ile kendi sayfasinin odasina girer (sifreli sayfada
+  // gecerli erisim jetonu sartiyla) ve yalnizca o sayfadaki monitorlerin
+  // durumunu alir. monitorId -> sayfa eslemesi bellekte tutulur.
+  let monitorPages = new Map<string, Set<string>>();
+  let monitorPagesLoadedAt = 0;
+  const refreshMonitorPages = async (force = false) => {
+    if (!force && Date.now() - monitorPagesLoadedAt < 60_000) return;
+    monitorPagesLoadedAt = Date.now();
+    const pages = await prisma.publicStatusPage.findMany({
+      select: { id: true, monitors: { select: { id: true } }, groups: { select: { monitors: { select: { id: true } } } } }
+    });
+    const next = new Map<string, Set<string>>();
+    const add = (mid: string, pid: string) => { if (!next.has(mid)) next.set(mid, new Set()); next.get(mid)!.add(pid); };
+    for (const p of pages) {
+      p.monitors.forEach((m: any) => add(m.id, p.id));
+      p.groups.forEach((g: any) => g.monitors.forEach((m: any) => add(m.id, p.id)));
+    }
+    monitorPages = next;
+  };
+
   io.on('connection', (socket) => {
     socket.on('join-workspace', async (workspaceId: string) => {
       try {
@@ -1044,22 +1068,62 @@ async function startServer() {
         if (ws) socket.join(`ws:${workspaceId}`);
       } catch { /* ignore */ }
     });
+    socket.on('join-status-page', async (payload: any) => {
+      try {
+        const slug = typeof payload === 'string' ? payload : payload?.slug;
+        const token = typeof payload === 'object' ? payload?.token : undefined;
+        if (typeof slug !== 'string') return;
+        const page = await prisma.publicStatusPage.findUnique({ where: { slug }, select: { id: true, slug: true, passwordHash: true } });
+        if (!page) return;
+        if (page.passwordHash && !hasStatusPageAccess({ headers: { 'x-status-page-token': token } }, page.slug)) return;
+        await refreshMonitorPages(true);
+        socket.join(`sp:${page.id}`);
+      } catch { /* ignore */ }
+    });
   });
 
+  // --- Toplu yayin ---
+  // Pinger 600 monitoru kontrol ederken her sonuc icin ayri olay atmak,
+  // tarayicida 600 ayri React render'i demekti (tiklamalarin gec cevap
+  // vermesinin ana sebebi). Guncellemeler 1 sn biriktirilip oda basina TEK
+  // olay olarak gonderilir; ayni monitorun pencere icindeki tekrarlari tekillenir.
+  const pendingMonitors = new Map<string, Map<string, any>>(); // workspaceId -> (monitorId -> monitor)
+  const pendingLogs = new Map<string, any[]>();                // workspaceId -> logs
+  const pendingPageStatus = new Map<string, Map<string, any>>(); // pageId -> (monitorId -> slim status)
+  let flushTimer: NodeJS.Timeout | null = null;
+  const scheduleFlush = () => {
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      for (const [wsId, m] of pendingMonitors) io.to(`ws:${wsId}`).emit('monitors-updated', [...m.values()]);
+      for (const [wsId, logs] of pendingLogs) io.to(`ws:${wsId}`).emit('ping-logs', logs);
+      for (const [pageId, m] of pendingPageStatus) io.to(`sp:${pageId}`).emit('monitor-statuses', [...m.values()]);
+      pendingMonitors.clear(); pendingLogs.clear(); pendingPageStatus.clear();
+    }, 1000);
+  };
+
   const emitMonitorUpdated = (monitor: any) => {
-    io.to(`ws:${monitor.workspaceId}`).emit('monitor-updated', monitor);
-    io.emit('monitor-status', {
-      id: monitor.id,
-      status: monitor.status,
-      currentStatus: monitor.currentStatus,
-      lastChecked: monitor.lastChecked
-    });
+    if (!pendingMonitors.has(monitor.workspaceId)) pendingMonitors.set(monitor.workspaceId, new Map());
+    pendingMonitors.get(monitor.workspaceId)!.set(monitor.id, monitor);
+    const pages = monitorPages.get(monitor.id);
+    if (pages) {
+      const slim = { id: monitor.id, status: monitor.status, currentStatus: monitor.currentStatus, lastChecked: monitor.lastChecked };
+      for (const pid of pages) {
+        if (!pendingPageStatus.has(pid)) pendingPageStatus.set(pid, new Map());
+        pendingPageStatus.get(pid)!.set(monitor.id, slim);
+      }
+    }
+    scheduleFlush();
   };
   const emitMonitorCreated = (monitor: any) => io.to(`ws:${monitor.workspaceId}`).emit('monitor-created', monitor);
   const emitMonitorDeleted = (monitorId: string) => {
     io.emit('monitor-deleted', monitorId); // only an id — safe to broadcast (public status pages need it)
   };
-  const emitPingLog = (logEntry: any, workspaceId: string) => io.to(`ws:${workspaceId}`).emit('ping-log', logEntry);
+  const emitPingLog = (logEntry: any, workspaceId: string) => {
+    if (!pendingLogs.has(workspaceId)) pendingLogs.set(workspaceId, []);
+    pendingLogs.get(workspaceId)!.push(logEntry);
+    scheduleFlush();
+  };
 
   // Workspaces
   app.get('/api/workspaces', authenticateToken, async (req: any, res) => {
@@ -1358,10 +1422,67 @@ async function startServer() {
     }
   });
 
+  // Agir ama yavas degisen hesaplar icin onbellek:
+  //  - ayni anahtara ayni anda gelen istekler TEK hesaplamayi bekler
+  //    (eskiden onbellek bosken 5 sekme = 5 ayni agir sorgu);
+  //  - sure dolunca kullaniciya eski deger hemen doner, yenisi arka planda
+  //    hesaplanir; deger cok bayatsa (maxStaleMs) yeni deger beklenir.
+  const swrCache = new Map<string, { at: number; value?: any; pending?: Promise<any> }>();
+  const cachedSWR = async <T,>(key: string, ttlMs: number, maxStaleMs: number, fn: () => Promise<T>): Promise<T> => {
+    let e = swrCache.get(key);
+    if (!e) { e = { at: 0 }; swrCache.set(key, e); }
+    const entry = e;
+    const refresh = () => {
+      if (!entry.pending) {
+        entry.pending = fn()
+          .then(v => { entry.value = v; entry.at = Date.now(); return v; })
+          .finally(() => { entry.pending = undefined; });
+      }
+      return entry.pending as Promise<T>;
+    };
+    const age = Date.now() - entry.at;
+    if (entry.value !== undefined && age < maxStaleMs) {
+      if (age > ttlMs) refresh().catch(() => {});
+      return entry.value;
+    }
+    return refresh();
+  };
+
+  // Son N gunun gunluk uptime'i, verilen monitorler icin TEK sorguda.
+  // Eskiden her gun icin ayri count/groupBy atiliyordu (gecmis ozeti: 14 sorgu,
+  // detay sayfasi: 14 sorgu) ve PingLog'da indeks olmadigindan HER BIRI milyonlarca
+  // satiri tariyordu. Gunler UTC'dir (durum sayfasiyla ayni).
+  const dailyUptime = async (monitorIds: string[], days: number) => {
+    const start = new Date();
+    start.setUTCHours(0, 0, 0, 0);
+    start.setUTCDate(start.getUTCDate() - (days - 1));
+    const rows = monitorIds.length === 0 ? [] : await prisma.$queryRaw<any[]>`
+      SELECT "monitorId", date_trunc('day', timestamp) AS day,
+             count(*)::integer AS total,
+             count(*) FILTER (WHERE status = 0)::integer AS down
+      FROM "PingLog"
+      WHERE "monitorId" IN (${Prisma.join(monitorIds)}) AND timestamp >= ${start}
+      GROUP BY 1, 2`;
+    const byKey = new Map<string, { total: number; down: number }>();
+    for (const r of rows) byKey.set(`${r.monitorId}|${new Date(r.day).toISOString().slice(0, 10)}`, r);
+    const result: Record<string, any[]> = {};
+    for (const id of monitorIds) {
+      result[id] = Array.from({ length: days }, (_, k) => {
+        const i = days - 1 - k; // 6..0 — eski cevapla ayni "index" anlami
+        const date = new Date(start); date.setUTCDate(start.getUTCDate() + k);
+        const d = byKey.get(`${id}|${date.toISOString().slice(0, 10)}`);
+        return { date, uptime: d && d.total > 0 ? ((d.total - d.down) / d.total) * 100 : -1, index: i };
+      });
+    }
+    return result;
+  };
+
+  // Gecmis ozeti tum kullanicilar/sekmeler icin sunucuda onbelleklenir
+  // (60 sn taze, 10 dk'ya kadar arka planda yenilenir): gunluk cubuklar
+  // dakikalik degisimi zaten gostermez.
+
   // Dashboard mini gecmis cubuklari: workspace'teki TUM monitorlarin son 7 gunu
-  // tek istekte. Eskiden her kart /monitors/:id/history cagiriyordu; 600 monitor
-  // = 600 istek ve rate limit (429). Sorgu sayisi monitor sayisindan bagimsiz (14).
-  // NOT: /api/monitors/:id rotasindan ONCE tanimli kalmali.
+  // tek istekte. NOT: /api/monitors/:id rotasindan ONCE tanimli kalmali.
   app.get('/api/monitors/history-summary', authenticateToken, async (req: any, res) => {
     try {
       const workspaceId = req.query.workspaceId as string;
@@ -1369,35 +1490,12 @@ async function startServer() {
       const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
-      const monitors = await prisma.monitor.findMany({ where: { workspaceId }, select: { id: true } });
-      const result: Record<string, any[]> = {};
-      monitors.forEach((m: any) => { result[m.id] = []; });
-
-      const days = Array.from({ length: 7 }, (_, i) => 6 - i);
-      const perDay = await Promise.all(days.map(async (i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        date.setHours(0, 0, 0, 0);
-        const nextDate = new Date(date);
-        nextDate.setDate(date.getDate() + 1);
-        const where = { monitor: { workspaceId }, timestamp: { gte: date, lt: nextDate } };
-        const [totals, downs] = await Promise.all([
-          prisma.pingLog.groupBy({ by: ['monitorId'], where, _count: { _all: true } }),
-          prisma.pingLog.groupBy({ by: ['monitorId'], where: { ...where, status: 0 }, _count: { _all: true } })
-        ]);
-        const totalMap = new Map(totals.map((r: any) => [r.monitorId, r._count._all]));
-        const downMap = new Map(downs.map((r: any) => [r.monitorId, r._count._all]));
-        return { i, date, totalMap, downMap };
-      }));
-
-      for (const { i, date, totalMap, downMap } of perDay) {
-        for (const id of Object.keys(result)) {
-          const total = (totalMap.get(id) as number) || 0;
-          const down = (downMap.get(id) as number) || 0;
-          result[id].push({ date, uptime: total > 0 ? ((total - down) / total) * 100 : -1, index: i });
-        }
-      }
-      res.json(result);
+      const data = await cachedSWR(`hs:${workspaceId}`, 60_000, 10 * 60_000, async () => {
+        const monitors = await prisma.monitor.findMany({ where: { workspaceId }, select: { id: true } });
+        return dailyUptime(monitors.map((m: any) => m.id), 7);
+      });
+      // Onbellek sonrasi eklenen monitorler icin bos dizi (kart "veri yok" gosterir)
+      res.json(data);
     } catch (error: any) {
       serverError(res, error);
     }
@@ -1518,7 +1616,9 @@ async function startServer() {
         where: { monitor: { workspaceId } },
         orderBy: { timestamp: 'desc' },
         take: 300,
-        include: { monitor: true }
+        // Sayfa yalnizca id/ad/adres kullaniyor; 300 satirin her birine tum
+        // monitor kaydini (webhook'lar dahil) eklemek gereksiz yuk ve sizinti.
+        include: { monitor: { select: { id: true, name: true, url: true } } }
       });
       res.json(logs);
     } catch (error: any) {
@@ -1556,25 +1656,23 @@ async function startServer() {
         { label: '30d', days: 30 }
       ];
 
-      const stats = await Promise.all(periods.map(async (period) => {
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - period.days);
-
-        const total = await prisma.pingLog.count({
-          where: { monitorId, timestamp: { gte: startDate } }
-        });
-
-        const up = await prisma.pingLog.count({
-          where: { monitorId, timestamp: { gte: startDate }, status: 1 }
-        });
-
-        const percentage = total > 0 ? (up / total) * 100 : 100;
-
-        return {
-          name: period.label,
-          uptime: parseFloat(percentage.toFixed(2))
-        };
-      }));
+      const now = Date.now();
+      const since = (d: number) => new Date(now - d * 24 * 60 * 60 * 1000);
+      const [row] = await prisma.$queryRaw<any[]>`
+        SELECT
+          count(*) FILTER (WHERE timestamp >= ${since(1)})::integer AS t1,
+          count(*) FILTER (WHERE timestamp >= ${since(1)} AND status = 1)::integer AS u1,
+          count(*) FILTER (WHERE timestamp >= ${since(7)})::integer AS t7,
+          count(*) FILTER (WHERE timestamp >= ${since(7)} AND status = 1)::integer AS u7,
+          count(*)::integer AS t30,
+          count(*) FILTER (WHERE status = 1)::integer AS u30
+        FROM "PingLog"
+        WHERE "monitorId" = ${monitorId} AND timestamp >= ${since(30)}`;
+      const pct = (t: number, u: number) => parseFloat((t > 0 ? (u / t) * 100 : 100).toFixed(2));
+      const stats = periods.map(p => {
+        const k = p.days === 1 ? 1 : p.days === 7 ? 7 : 30;
+        return { name: p.label, uptime: pct(row[`t${k}`], row[`u${k}`]) };
+      });
 
       res.json(stats);
     } catch (error: any) {
@@ -1589,41 +1687,7 @@ async function startServer() {
       const monitor = await checkMonitorAccess(monitorId, req.user.id);
       if (!monitor) return res.status(404).json({ error: 'Not found' });
 
-      const days = Array.from({ length: 7 }, (_, i) => 6 - i);
-      
-      const results = await Promise.all(days.map(async (i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        date.setHours(0, 0, 0, 0);
-        
-        const nextDate = new Date(date);
-        nextDate.setDate(date.getDate() + 1);
-
-        const total = await prisma.pingLog.count({
-          where: { 
-            monitorId, 
-            timestamp: { gte: date, lt: nextDate } 
-          }
-        });
-
-        const down = await prisma.pingLog.count({
-          where: { 
-            monitorId, 
-            status: 0,
-            timestamp: { gte: date, lt: nextDate } 
-          }
-        });
-
-        let uptime = 100;
-        if (total > 0) {
-          uptime = ((total - down) / total) * 100;
-        } else {
-          uptime = -1;
-        }
-
-        return { date, uptime, index: i };
-      }));
-
+      const results = (await dailyUptime([monitorId], 7))[monitorId];
       results.sort((a, b) => b.index - a.index);
       res.json(results);
     } catch (error: any) {
@@ -1911,7 +1975,11 @@ async function startServer() {
         cutoffDate.setUTCHours(0, 0, 0, 0);
         cutoffDate.setUTCDate(cutoffDate.getUTCDate() - historyDays);
 
-        const results = await prisma.$queryRaw<any[]>`
+        // Bu uc kimlik dogrulamasiz: her ziyarette 90 gunluk gecmisi bastan
+        // toplamak hem yavas (~1,5 sn) hem de art arda cagrilarak sunucuyu
+        // yormanin kolay bir yoluydu. Gecmis sayfa basina onbelleklenir; anlik
+        // durumlar (currentStatus) yukaridaki hafif sorgudan her istekte taze gelir.
+        const results = await cachedSWR<any[]>(`ps:${page.id}:${allIds.length}`, 60_000, 15 * 60_000, () => prisma.$queryRaw<any[]>`
           SELECT 
             "monitorId",
             date_trunc('day', timestamp) AS day,
@@ -1923,7 +1991,7 @@ async function startServer() {
             AND timestamp >= ${cutoffDate}
           GROUP BY "monitorId", day
           ORDER BY day ASC
-        `;
+        `);
 
         for (const row of results) {
           const dayStr = new Date(row.day).toISOString().split('T')[0];
@@ -2130,17 +2198,30 @@ async function startServer() {
   }
 
   // --- LOG CLEANUP JOB ---
+  // Tek bir dev deleteMany yerine 5000'lik parcalar: milyonlarca satiri tek
+  // islemde silmek tabloyu dakikalarca kilitler ve pinger'in INSERT'lerini
+  // bekletir. Ilk calisma acilistan 5 dk sonra (acilis yukuyle cakismasin).
   async function runLogCleanup() {
+    await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000));
     while (true) {
       try {
         const workspaces = await prisma.workspace.findMany({ select: { id: true, logRetentionDays: true } });
         for (const ws of workspaces) {
           const cutoff = new Date();
           cutoff.setDate(cutoff.getDate() - (ws.logRetentionDays || 90));
-          const deleted = await prisma.pingLog.deleteMany({
-            where: { monitor: { workspaceId: ws.id }, timestamp: { lt: cutoff } }
-          });
-          if (deleted.count > 0) log(`DEBUG: Cleaned ${deleted.count} old logs for workspace ${ws.id}`);
+          let total = 0;
+          while (true) {
+            const n = await prisma.$executeRaw`
+              DELETE FROM "PingLog" WHERE id IN (
+                SELECT p.id FROM "PingLog" p
+                JOIN "Monitor" m ON m.id = p."monitorId"
+                WHERE m."workspaceId" = ${ws.id} AND p.timestamp < ${cutoff}
+                LIMIT 5000)`;
+            total += n;
+            if (n < 5000) break;
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+          if (total > 0) log(`DEBUG: Cleaned ${total} old logs for workspace ${ws.id}`);
         }
       } catch (err: any) {
         log(`DEBUG: Log cleanup error: ${err.message}`);
@@ -2151,7 +2232,7 @@ async function startServer() {
   }
 
   // --- PINGER ENGINE ---
-  async function pingOneMonitor(monitor: any) {
+  async function pingOneMonitor(monitor: any, inMaintenance?: boolean) {
     let status = 1;
     let responseTime = 0;
     let errorMessage = '';
@@ -2160,15 +2241,16 @@ async function startServer() {
     const dnsUpdateData: any = {};
 
     // Check Maintenance Window
-    const now = new Date();
-    const activeMaintenance = await prisma.maintenanceWindow.findFirst({
-      where: {
-        monitorId: monitor.id,
-        active: true,
-        startTime: { lte: now },
-        endTime: { gte: now }
-      }
-    });
+    // Pinger her turda aktif bakim pencerelerini TEK sorguda ceker ve sonucu
+    // buraya verir; monitor basina bir sorgu (600 monitor = 600 sorgu) atilmaz.
+    let activeMaintenance = inMaintenance;
+    if (activeMaintenance === undefined) {
+      const now = new Date();
+      activeMaintenance = !!(await prisma.maintenanceWindow.findFirst({
+        where: { monitorId: monitor.id, active: true, startTime: { lte: now }, endTime: { gte: now } },
+        select: { id: true }
+      }));
+    }
 
     if (activeMaintenance) {
       if (monitor.currentStatus !== 'maintenance') {
@@ -2308,41 +2390,98 @@ async function startServer() {
     log(`DEBUG: ${monitor.name}: ${status === 1 ? 'UP' : status === 2 ? 'DEGRADED' : 'DOWN'} (${responseTime}ms)`);
   }
 
+  // Eski dongu: 10 sn'de bir TUM monitorleri (workspace+grup join'iyle) cekip
+  // vadesi gelenlerin HEPSINI ayni anda baslatiyor, sonra en yavasini (10 sn
+  // timeout) bekliyordu. 600 monitorde bu; ayni anda 600 HTTP + ~1800 DB
+  // sorgusu, veritabani havuzunun API isteklerine yer kalmayacak kadar dolmasi
+  // ve turlarin 60 sn yerine ~85 sn'de bir donmesi demekti.
+  // Yeni dongu: 2 sn'de bir hafif sorguyla vadesi gelenleri bulur, sabit
+  // eszamanlilikla (PINGER_CONCURRENCY) calistirir ve hicbir turu beklemez;
+  // yavas bir hedef yalnizca kendi slotunu tutar.
+  const PINGER_CONCURRENCY = Math.max(1, parseInt(process.env.PINGER_CONCURRENCY || '25'));
+  const inFlight = new Set<string>();
+  const pingQueue: string[] = [];
+  let lastHousekeeping = 0;
+
+  async function pumpQueue(maintenanceIds: Set<string>) {
+    while (inFlight.size < PINGER_CONCURRENCY && pingQueue.length > 0) {
+      const ids = pingQueue.splice(0, PINGER_CONCURRENCY - inFlight.size);
+      ids.forEach(id => inFlight.add(id));
+      let monitors: any[];
+      try {
+        monitors = await prisma.monitor.findMany({ where: { id: { in: ids } }, include: { workspace: true, group: true } });
+      } catch (e) {
+        // Slotlari birak: aksi halde bu monitorler "islemde" sanilip bir daha
+        // hic kontrol edilmez. Bir sonraki turda yeniden vadesi gelmis sayilirlar.
+        ids.forEach(id => inFlight.delete(id));
+        throw e;
+      }
+      const found = new Set(monitors.map((m: any) => m.id));
+      ids.filter(id => !found.has(id)).forEach(id => inFlight.delete(id)); // arada silinmis
+      for (const m of monitors) {
+        pingOneMonitor(m, maintenanceIds.has(m.id))
+          .catch((e: any) => log(`DEBUG: pingOneMonitor error for ${m.name}: ${e.message}`))
+          .finally(() => { inFlight.delete(m.id); pumpQueue(maintenanceIds).catch(() => {}); });
+      }
+    }
+  }
+
+  async function runHousekeeping(now: number) {
+    // Heartbeat timeout check
+    const hbMonitors = await prisma.monitor.findMany({
+      where: { status: { not: 'paused' }, monitorType: 'HEARTBEAT' }, include: { workspace: true, group: true }
+    });
+    for (const hb of hbMonitors) {
+      const limitMs = (hb.interval + (hb.heartbeatGrace || 5) * 60) * 1000;
+      if (hb.lastChecked && now - hb.lastChecked.getTime() > limitMs && hb.currentStatus !== 'down') {
+         const logEntry = await prisma.pingLog.create({ data: { monitorId: hb.id, status: 0, responseTime: 0, errorMessage: 'Heartbeat missed', statusCode: 0 } });
+         if (!memberAlertsSuppressed(hb)) await dispatchNotification(hb, hb.workspace, 'down', 'Heartbeat missed');
+         const updated = await prisma.monitor.update({ where: { id: hb.id }, data: { currentStatus: 'down', incidentActive: true, consecutiveFailures: hb.consecutiveFailures + 1 } });
+         emitPingLog(logEntry, hb.workspaceId);
+         emitMonitorUpdated(updated);
+         log(`DEBUG: Heartbeat missed for ${hb.name}`);
+      }
+    }
+    // Uye durumlarinin guncellendigi turlardan SONRA calisir.
+    await evaluateCompositeGroups();
+    await refreshMonitorPages();
+  }
+
   async function runPinger() {
-    log('DEBUG: Pinger loop started (parallel mode)');
+    log(`DEBUG: Pinger loop started (concurrency ${PINGER_CONCURRENCY})`);
     while (true) {
       try {
         const now = Date.now();
-        const activeMonitors = await prisma.monitor.findMany({ where: { status: { not: 'paused' } }, include: { workspace: true, group: true } });
-        
-        // Regular active monitors (HTTP, TCP)
-        const due = activeMonitors.filter(m => m.monitorType !== 'HEARTBEAT' && now - (m.lastChecked?.getTime() || 0) >= (m.interval || 60) * 1000);
+        const nowDate = new Date(now);
+        const [candidates, maint] = await Promise.all([
+          prisma.monitor.findMany({
+            where: { status: { not: 'paused' }, monitorType: { not: 'HEARTBEAT' } },
+            select: { id: true, lastChecked: true, interval: true }
+          }),
+          prisma.maintenanceWindow.findMany({
+            where: { active: true, startTime: { lte: nowDate }, endTime: { gte: nowDate } },
+            select: { monitorId: true }
+          })
+        ]);
+        const maintenanceIds = new Set<string>(maint.map((w: any) => w.monitorId));
+        const queued = new Set(pingQueue);
+        const due = candidates
+          .filter((m: any) => !inFlight.has(m.id) && !queued.has(m.id) && now - (m.lastChecked?.getTime() || 0) >= (m.interval || 60) * 1000)
+          .sort((a: any, b: any) => (a.lastChecked?.getTime() || 0) - (b.lastChecked?.getTime() || 0)); // en cok geciken once
         if (due.length > 0) {
-          log(`DEBUG: Pinging ${due.length} monitors in parallel`);
-          await Promise.allSettled(due.map(m => pingOneMonitor(m).catch((e: any) => log(`DEBUG: pingOneMonitor error for ${m.name}: ${e.message}`))));
+          pingQueue.push(...due.map((m: any) => m.id));
+          if (due.length >= 50) log(`DEBUG: Queued ${due.length} monitors (in flight ${inFlight.size})`);
         }
+        await pumpQueue(maintenanceIds);
 
-        // Heartbeat timeout check
-        const hbMonitors = activeMonitors.filter(m => m.monitorType === 'HEARTBEAT');
-        for (const hb of hbMonitors) {
-          const limitMs = (hb.interval + (hb.heartbeatGrace || 5) * 60) * 1000;
-          if (hb.lastChecked && now - hb.lastChecked.getTime() > limitMs && hb.currentStatus !== 'down') {
-             const logEntry = await prisma.pingLog.create({ data: { monitorId: hb.id, status: 0, responseTime: 0, errorMessage: 'Heartbeat missed', statusCode: 0 } });
-             if (!memberAlertsSuppressed(hb)) await dispatchNotification(hb, hb.workspace, 'down', 'Heartbeat missed');
-             const updated = await prisma.monitor.update({ where: { id: hb.id }, data: { currentStatus: 'down', incidentActive: true, consecutiveFailures: hb.consecutiveFailures + 1 } });
-             emitPingLog(logEntry, hb.workspaceId);
-             emitMonitorUpdated(updated);
-             log(`DEBUG: Heartbeat missed for ${hb.name}`);
-          }
+        if (now - lastHousekeeping >= 10_000) {
+          lastHousekeeping = now;
+          await runHousekeeping(now);
         }
-
-        // Uye durumlari guncellendikten SONRA calisir: grup kararini ayni
-        // turda yazilan taze durumlar uzerinden verir.
-        await evaluateCompositeGroups();
       } catch (error: any) {
         log(`DEBUG: Pinger error: ${error.message}`);
       }
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
 

@@ -102,6 +102,8 @@ model MonitorGroup {
   // icin JSON tasima maliyeti yok. Sema dogrulamasi lib/validation.ts'te.
   degradedChannels     String?
   downChannels         String?
+
+  @@index([workspaceId])
 }
 
 model Monitor {
@@ -156,6 +158,9 @@ model Monitor {
   dnsResolutionTime Int?
   dnsResolvedIp     String?
   dnsLastChanged    DateTime?
+
+  @@index([workspaceId])
+  @@index([groupId])
 }
 
 model PingLog {
@@ -167,6 +172,9 @@ model PingLog {
   responseTime Int
   statusCode   Int
   errorMessage String?
+
+  @@index([monitorId, timestamp])
+  @@index([timestamp])
 }
 
 model MaintenanceWindow {
@@ -178,6 +186,8 @@ model MaintenanceWindow {
   timezone    String   @default("UTC")
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
+
+  @@index([monitorId])
 }
 
 model PublicStatusPage {

@@ -4,7 +4,7 @@ import { Bell, AlertTriangle, CheckCircle2, XCircle, Clock, ShieldAlert, Activit
 import { formatDistanceToNow, format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import api from '../lib/api';
-import { socket, connectSocket } from '../lib/socket';
+import { connectSocket } from '../lib/socket';
 import { useTranslation } from '../lib/i18n';
 
 export default function Alerts({ workspace }: { user: any; workspace: any }) {
@@ -29,19 +29,9 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
 
     fetchAlerts();
 
-    const handlePingLog = (log: any) => {
-      // Assuming socket doesn't send monitor details, we might just re-fetch, 
-      // but for simplicity, wait for periodic refresh or user interaction.
-      // Easiest is to add it if we had monitor data, but since we don't naturally,
-      // we can just optionally refetch if needed.
-    };
-
+    // Sayfa canli loglari kullanmiyordu ama her kontrol icin bos bir dinleyici
+    // kayitliydi; dinleyici kaldirildi (veri sayfa acilisinda cekiliyor).
     connectSocket(workspace.id);
-    socket.on('ping-log', handlePingLog);
-
-    return () => {
-      socket.off('ping-log', handlePingLog);
-    };
   }, [workspace]);
 
   // Process raw logs into incidents

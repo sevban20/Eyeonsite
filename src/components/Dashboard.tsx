@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useDeferredValue, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, CheckCircle2, XCircle, Clock, ChevronRight, ChevronDown, Trash2, Pause, Play, Globe, ExternalLink, Activity, Search, Filter, ArrowUpRight, CheckSquare, Square, Lock, FolderPlus, Folder, MoreVertical, Edit2, FolderOpen, Settings2, AlertTriangle } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
@@ -13,7 +13,7 @@ interface DashboardProps {
   workspace: any;
 }
 
-function MiniAvailabilityHistory({ history: rawHistory }: { history?: any[] }) {
+const MiniAvailabilityHistory = memo(function MiniAvailabilityHistory({ history: rawHistory }: { history?: any[] }) {
   const { t } = useTranslation();
   // Veri artik Dashboard'dan toplu geliyor (/monitors/history-summary).
   const history = (rawHistory || []).map((d: any) => ({ ...d, date: new Date(d.date) }));
@@ -40,18 +40,20 @@ function MiniAvailabilityHistory({ history: rawHistory }: { history?: any[] }) {
       )}
     </div>
   );
-}
+});
 
-function MonitorCard({ monitor, history, selectedMonitors, toggleSelectMonitor, toggleStatus, deleteMonitor }: any) {
+// 600 kartlik listede her socket guncellemesi tum kartlari yeniden ciziyordu.
+// memo + "isSelected" boolean'i (secim dizisinin tamami yerine) sayesinde
+// yalnizca degisen kart yeniden cizilir. Kart basina 'layout' animasyonu ve
+// giris animasyonu kaldirildi: motion her render'da 600 kartin konumunu olcuyordu.
+// content-visibility ekran disindaki kartlarin cizimini tarayiciya erteletir.
+const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, toggleSelectMonitor, toggleStatus, deleteMonitor }: any) {
   const { t } = useTranslation();
   return (
-    <motion.div 
-      layout
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      className={`group glass p-4 rounded-2xl transition-all card-gradient cursor-pointer ${
-        selectedMonitors.includes(monitor.id) ? 'border-orange-500/50 bg-orange-500/[0.02]' : 'hover:border-zinc-700'
+    <div
+      style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 88px' } as React.CSSProperties}
+      className={`group glass p-4 rounded-2xl transition-colors card-gradient cursor-pointer ${
+        isSelected ? 'border-orange-500/50 bg-orange-500/[0.02]' : 'hover:border-zinc-700'
       }`}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('a')) {
@@ -63,7 +65,7 @@ function MonitorCard({ monitor, history, selectedMonitors, toggleSelectMonitor, 
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 flex-1 min-w-0">
           <div className="flex items-center justify-center w-6 h-6">
-            {selectedMonitors.includes(monitor.id) ? (
+            {isSelected ? (
               <CheckSquare className="w-5 h-5 text-orange-500" />
             ) : (
               <Square className="w-5 h-5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
@@ -75,7 +77,9 @@ function MonitorCard({ monitor, history, selectedMonitors, toggleSelectMonitor, 
               monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
               monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
             }`} />
-            {monitor.status !== 'paused' && (
+            {/* Surekli "ping" animasyonu yalnizca sorunlu monitorlerde: 600
+                kartta 600 sonsuz animasyon tarayiciyi surekli yeniden ciziyordu. */}
+            {monitor.status !== 'paused' && monitor.currentStatus !== 'up' && (
               <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${
                 monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
                 monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
@@ -162,9 +166,9 @@ function MonitorCard({ monitor, history, selectedMonitors, toggleSelectMonitor, 
           </div>
         </div>
       </div>
-    </motion.div>
+    </div>
   );
-}
+});
 
 export default function Dashboard({ user, workspace }: DashboardProps) {
   const { t } = useTranslation();
@@ -225,10 +229,13 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       // Socket.io listeners (authenticated — joins the workspace room)
       connectSocket(workspace.id);
       
-      const handleMonitorUpdated = (updatedMonitor: any) => {
-        if (updatedMonitor.workspaceId === workspace.id) {
-          setMonitors(prev => prev.map(m => m.id === updatedMonitor.id ? updatedMonitor : m));
-        }
+      // Sunucu guncellemeleri ~1 sn'lik paketler halinde yollar: paket basina
+      // TEK state guncellemesi (eskiden monitor basina bir render vardi).
+      const handleMonitorsUpdated = (batch: any[]) => {
+        const updates = new Map<string, any>();
+        for (const m of batch) if (m.workspaceId === workspace.id) updates.set(m.id, m);
+        if (updates.size === 0) return;
+        setMonitors(prev => prev.map(m => updates.get(m.id) || m));
       };
 
       const handleMonitorCreated = (createdMonitor: any) => {
@@ -241,12 +248,12 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
         setMonitors(prev => prev.filter(m => m.id !== deletedId));
       };
 
-      socket.on('monitor-updated', handleMonitorUpdated);
+      socket.on('monitors-updated', handleMonitorsUpdated);
       socket.on('monitor-created', handleMonitorCreated);
       socket.on('monitor-deleted', handleMonitorDeleted);
 
       return () => {
-        socket.off('monitor-updated', handleMonitorUpdated);
+        socket.off('monitors-updated', handleMonitorsUpdated);
         socket.off('monitor-created', handleMonitorCreated);
         socket.off('monitor-deleted', handleMonitorDeleted);
       };
@@ -390,14 +397,15 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     }
   };
 
-  const toggleStatus = async (monitor: any, e?: React.MouseEvent) => {
+  const toggleStatus = useCallback(async (monitor: any, e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
     const newStatus = monitor.status === 'paused' ? 'up' : 'paused';
     try {
-      await api.put(`/monitors/${monitor.id}`, { status: newStatus });
+      const res = await api.put(`/monitors/${monitor.id}`, { status: newStatus });
+      setMonitors(prev => prev.map(m => m.id === monitor.id ? res.data : m));
       toast.success(`Monitor ${newStatus === 'paused' ? 'paused' : 'resumed'}`, {
         description: `${monitor.name} is now ${newStatus === 'paused' ? 'paused' : 'active'}.`
       });
@@ -405,9 +413,9 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       console.error('Error toggling status:', error);
       toast.error('Failed to update monitor status');
     }
-  };
+  }, []);
 
-  const deleteMonitor = async (id: string) => {
+  const deleteMonitor = useCallback(async (id: string) => {
     if (window.confirm('Are you sure you want to delete this monitor?')) {
       try {
         await api.delete(`/monitors/${id}`);
@@ -416,7 +424,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
         toast.error('Failed to delete monitor');
       }
     }
-  };
+  }, []);
 
   const handleBulkAction = async (action: 'pause' | 'resume' | 'delete') => {
     if (selectedMonitors.length === 0) return;
@@ -446,21 +454,46 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     }
   };
 
-  const toggleSelectMonitor = (id: string) => {
+  const toggleSelectMonitor = useCallback((id: string) => {
     setSelectedMonitors(prev => 
       prev.includes(id) ? prev.filter(mId => mId !== id) : [...prev, id]
     );
-  };
+  }, []);
 
-  const filteredMonitors = monitors.filter(m => 
-    m.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    m.url.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Arama kutusuna yazarken liste filtrelemesi yazmayi bloklamasin.
+  const deferredQuery = useDeferredValue(searchQuery);
+  // url HEARTBEAT monitorlerinde null: eskiden aramada sayfa cokuyordu.
+  const filteredMonitors = useMemo(() => {
+    const q = deferredQuery.toLowerCase();
+    if (!q) return monitors;
+    return monitors.filter(m =>
+      (m.name || '').toLowerCase().includes(q) || (m.url || '').toLowerCase().includes(q)
+    );
+  }, [monitors, deferredQuery]);
 
-  const upCount = monitors.filter(m => m.currentStatus === 'up' && m.status !== 'paused').length;
-  const degradedCount = monitors.filter(m => m.currentStatus === 'degraded' && m.status !== 'paused').length;
-  const downCount = monitors.filter(m => m.currentStatus === 'down' && m.status !== 'paused').length;
-  const pausedCount = monitors.filter(m => m.status === 'paused').length;
+  // Grup basina monitorler tek geciste (eskiden her grup icin tum liste filtreleniyordu).
+  const monitorsByGroup = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const m of filteredMonitors) {
+      const key = m.groupId || '';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(m);
+    }
+    return map;
+  }, [filteredMonitors]);
+
+  const selectedSet = useMemo(() => new Set(selectedMonitors), [selectedMonitors]);
+
+  const { upCount, degradedCount, downCount, pausedCount } = useMemo(() => {
+    let upCount = 0, degradedCount = 0, downCount = 0, pausedCount = 0;
+    for (const m of monitors) {
+      if (m.status === 'paused') { pausedCount++; continue; }
+      if (m.currentStatus === 'up') upCount++;
+      else if (m.currentStatus === 'degraded') degradedCount++;
+      else if (m.currentStatus === 'down') downCount++;
+    }
+    return { upCount, degradedCount, downCount, pausedCount };
+  }, [monitors]);
 
   return (
     <div className="max-w-7xl mx-auto px-6">
@@ -642,7 +675,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
         <div className="space-y-6">
           {/* Render Groups */}
           {monitorGroups.map(group => {
-            const groupMonitors = filteredMonitors.filter(m => m.groupId === group.id);
+            const groupMonitors = monitorsByGroup.get(group.id) || [];
             if (groupMonitors.length === 0 && searchQuery) return null;
 
             return (
@@ -745,7 +778,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                             key={monitor.id} 
                             monitor={monitor} 
                             history={historyMap[monitor.id]}
-                            selectedMonitors={selectedMonitors}
+                            isSelected={selectedSet.has(monitor.id)}
                             toggleSelectMonitor={toggleSelectMonitor}
                             toggleStatus={toggleStatus}
                             deleteMonitor={deleteMonitor}
@@ -766,7 +799,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
 
           {/* Ungrouped Monitors */}
           {(() => {
-            const ungroupedMonitors = filteredMonitors.filter(m => !m.groupId);
+            const ungroupedMonitors = monitorsByGroup.get('') || [];
             if (ungroupedMonitors.length === 0) return null;
 
             return (
@@ -784,7 +817,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                       key={monitor.id} 
                       monitor={monitor} 
                       history={historyMap[monitor.id]}
-                      selectedMonitors={selectedMonitors}
+                      isSelected={selectedSet.has(monitor.id)}
                       toggleSelectMonitor={toggleSelectMonitor}
                       toggleStatus={toggleStatus}
                       deleteMonitor={deleteMonitor}

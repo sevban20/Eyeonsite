@@ -47,6 +47,8 @@ export default function StatusPage() {
       });
       applyPageData(page.data);
       setLocked(null);
+      // Kilit acildi: canli durum guncellemeleri icin sayfanin odasina katil.
+      socket.emit('join-status-page', { slug, token: res.data.token });
       setPassword('');
     } catch (err: any) {
       setUnlockError(err.response?.status === 401
@@ -87,26 +89,35 @@ export default function StatusPage() {
 
     fetchStatusPage();
 
-    // Public pages receive the sanitized 'monitor-status' event (id + status fields only)
-    const handleMonitorStatus = (update: any) => {
-      setMonitors(prev => prev.map(m => m.id === update.id ? {
-        ...m,
-        status: update.status,
-        currentStatus: update.currentStatus,
-        lastChecked: update.lastChecked
-      } : m));
+    // Sayfa yalnizca kendi monitorlerinin durumunu alir (sunucuda 'sp:<sayfa>'
+    // odasi; sifreli sayfada gecerli jeton sart). Guncellemeler ~1 sn'lik
+    // paketler halinde gelir: { id, status, currentStatus, lastChecked }[]
+    const handleMonitorStatuses = (batch: any[]) => {
+      const updates = new Map<string, any>(batch.map((u: any) => [u.id, u]));
+      setMonitors(prev => prev.map(m => {
+        const u = m.kind === 'monitor' ? updates.get(m.id) : undefined;
+        return u ? { ...m, status: u.status, currentStatus: u.currentStatus, lastChecked: u.lastChecked } : m;
+      }));
+    };
+    const joinRoom = () => {
+      let token: string | null = null;
+      try { token = localStorage.getItem(tokenKey); } catch {}
+      socket.emit('join-status-page', { slug, token });
     };
 
     const handleMonitorDeleted = (deletedMonitorId: string) => {
       setMonitors(prev => prev.filter(m => m.id !== deletedMonitorId));
     };
 
-    connectSocket();
-    socket.on('monitor-status', handleMonitorStatus);
+    socket.on('connect', joinRoom); // yeniden baglanmada odaya tekrar gir
+    socket.on('monitor-statuses', handleMonitorStatuses);
     socket.on('monitor-deleted', handleMonitorDeleted);
+    connectSocket();
+    if (socket.connected) joinRoom();
 
     return () => {
-      socket.off('monitor-status', handleMonitorStatus);
+      socket.off('connect', joinRoom);
+      socket.off('monitor-statuses', handleMonitorStatuses);
       socket.off('monitor-deleted', handleMonitorDeleted);
     };
   }, [slug]);
