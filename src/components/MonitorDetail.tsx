@@ -885,7 +885,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                               <div key={stat.code} className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stat.fill }} />
-                                  <span className="text-[10px] font-mono font-bold text-zinc-300">{t(`monitor.period_${stat.name}`)}</span>
+                                  <span className="text-[10px] font-mono font-bold text-zinc-300">{stat.name}</span>
                                 </div>
                                 <span className="text-[10px] font-mono text-zinc-500">{stat.value} ({((stat.value / logs.length) * 100).toFixed(0)}%)</span>
                               </div>
