@@ -46,6 +46,7 @@ export default function AdminDashboard() {
   };
 
   const handleToggleBlock = async (userId: string, currentStatus: boolean) => {
+    if (!currentStatus && !window.confirm('Block this user? Their active sessions will stop working immediately.')) return;
     try {
       await api.post(`/admin/users/${userId}/block`, { isBlocked: !currentStatus });
       toast.success(currentStatus ? 'User unblocked' : 'User blocked');

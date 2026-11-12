@@ -3,7 +3,7 @@ import dns from 'dns';
 import net from 'net';
 
 // --- SSL CHECK FUNCTION ---
-export async function checkSSL(url: string): Promise<{
+export async function checkSSL(url: string, lookup?: any): Promise<{
   valid: boolean;
   expiry: Date | null;
   issuer: string | null;
@@ -18,7 +18,7 @@ export async function checkSSL(url: string): Promise<{
       }
       const port = parseInt(parsed.port) || 443;
       const hostname = parsed.hostname;
-      const socket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false }, () => {
+      const socket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false, ...(lookup ? { lookup } : {}) }, () => {
         try {
           const cert = socket.getPeerCertificate(true);
           socket.end();
@@ -65,7 +65,7 @@ export async function checkDNS(url: string): Promise<{ resolvedIp: string | null
 }
 
 // --- TCP CHECK FUNCTION ---
-export async function checkTCP(host: string, port: number, timeoutMs = 10000): Promise<{ responseTime: number }> {
+export async function checkTCP(host: string, port: number, timeoutMs = 10000, lookup?: any): Promise<{ responseTime: number }> {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const socket = new net.Socket();
@@ -83,6 +83,6 @@ export async function checkTCP(host: string, port: number, timeoutMs = 10000): P
       socket.destroy();
       reject(err);
     });
-    socket.connect(port, host);
+    socket.connect({ port, host, ...(lookup ? { lookup } : {}) });
   });
 }

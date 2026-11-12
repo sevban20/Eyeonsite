@@ -39,6 +39,10 @@ model User {
   githubId             String?   @unique
   provider             String    @default("local") // "local" | "google" | "github"
 
+  // Oturum iptali: parola degisince/sifirlaninca artar; JWT'deki deger
+  // eslesmezse eski oturumlar gecersiz sayilir.
+  tokenVersion         Int       @default(0)
+
   // Brute force protection
   loginAttempts        Int       @default(0)
   lockUntil            DateTime?

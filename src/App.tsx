@@ -71,17 +71,19 @@ const AdminRoute = ({ children }: { children: React.ReactNode }) => {
 
 const AppContent = () => {
   const { user, loading } = useAuth();
+  const { t } = useTranslation();
   const [workspace, setWorkspace] = useState<any>(null);
 
   useEffect(() => {
-    if (user) {
+    if (!user) { setWorkspace(null); return; }
+    {
       api.get('/workspaces').then(res => {
         if (res.data.length > 0) {
           setWorkspace(res.data[0]);
         }
       }).catch(err => console.error("Failed to fetch workspace", err));
     }
-  }, [user]);
+  }, [user?.id]);
 
   if (loading) {
     return (
@@ -92,7 +94,7 @@ const AppContent = () => {
             <Activity className="w-6 h-6 text-orange-500 animate-pulse" />
           </div>
         </div>
-        <p className="mt-6 text-zinc-400 font-medium tracking-wide uppercase text-[10px]">Initializing System</p>
+        <p className="mt-6 text-zinc-400 font-medium tracking-wide uppercase text-[10px]">{t('common.initializing')}</p>
       </div>
     );
   }
@@ -105,7 +107,7 @@ const AppContent = () => {
         <Route path="*" element={
           <>
             {user && <Navbar user={user} workspace={workspace} />}
-            <main className={user ? "pt-20 pb-12" : ""}>
+            <main className={user ? "pt-28 pb-12" : ""}>
               <Routes>
                 <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Landing />} />
                 <Route path="/auth" element={user ? <Navigate to="/dashboard" /> : <Auth />} />

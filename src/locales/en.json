@@ -14,7 +14,9 @@
     "back": "Back",
     "never": "Never",
     "processing": "Processing...",
-    "initializing": "Initializing System"
+    "initializing": "Initializing System",
+    "copied": "Copied",
+    "copy": "Copy"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -22,7 +24,9 @@
     "settings": "Settings",
     "status_pages": "Status Pages",
     "sign_out": "Sign Out",
-    "plan": "Plan"
+    "plan": "Plan",
+    "admin": "Admin",
+    "menu": "Menu"
   },
   "landing": {
     "badge": "The Future of Uptime",
@@ -175,7 +179,51 @@
     "composite_degraded_desc": "One or more circuits are down but the location is still reachable. Business-hours follow-up is usually enough.",
     "composite_down_title": "Total outage channels",
     "composite_down_desc": "Every circuit is down and the location is completely unreachable. Put your urgent channels here.",
-    "composite_saved": "Location alerting settings saved"
+    "composite_saved": "Location alerting settings saved",
+    "collapse_group": "Collapse group",
+    "expand_group": "Expand group",
+    "color": "Color",
+    "composite_status_up": "Up",
+    "composite_status_degraded": "Partial outage",
+    "composite_status_down": "Down",
+    "confirm_delete_group": "Delete this group? The monitors inside will not be deleted; they will be ungrouped.",
+    "confirm_delete_monitor": "Delete this monitor? Its history will be deleted too.",
+    "delete_group": "Delete group",
+    "delete_selected": "Delete selected",
+    "empty_state": "You have no monitors yet. Add your first one to start monitoring.",
+    "group": "Group",
+    "group_name": "Group name",
+    "group_name_placeholder": "e.g. Production Services",
+    "maintenance": "Maintenance",
+    "move_to": "Move to",
+    "name_placeholder": "e.g. Production API",
+    "never": "Never",
+    "new_group": "New Group",
+    "no_group": "None (ungrouped)",
+    "no_search_results": "No monitors match your search.",
+    "results": "{count} results",
+    "ssl_certificate": "SSL certificate",
+    "toast_bulk_delete": "{count} monitors deleted",
+    "toast_bulk_pause": "{count} monitors paused",
+    "toast_bulk_resume": "{count} monitors resumed",
+    "toast_bulk_failed": "The bulk action failed",
+    "toast_group_created": "Group created",
+    "toast_group_create_failed": "Could not create the group",
+    "toast_group_deleted": "Group deleted",
+    "toast_group_delete_failed": "Could not delete the group",
+    "toast_group_renamed": "Group renamed",
+    "toast_group_update_failed": "Could not update the group",
+    "toast_monitor_created": "Monitor created",
+    "toast_monitor_create_failed": "Could not create the monitor",
+    "toast_monitor_deleted": "Monitor deleted",
+    "toast_monitor_delete_failed": "Could not delete the monitor",
+    "toast_monitor_moved": "Monitor moved",
+    "toast_monitors_moved": "{count} monitors moved",
+    "toast_move_failed": "Could not move the monitor",
+    "toast_paused": "Monitor paused",
+    "toast_resumed": "Monitor resumed",
+    "toast_status_failed": "Could not update the monitor status",
+    "ungrouped": "Ungrouped"
   },
   "alerts": {
     "feed_label": "Global Alerts Feed",
@@ -191,7 +239,8 @@
     "active_outage": "Active Outage",
     "active_degraded": "Degraded",
     "downtime": "Downtime",
-    "loading": "Loading Alerts Data..."
+    "loading": "Loading Alerts Data...",
+    "performance_degraded": "Performance degraded"
   },
   "settings": {
     "label": "Workspace Settings",
@@ -268,7 +317,14 @@
     "apikeys_last_used": "Last used",
     "apikeys_never_used": "Never used",
     "apikeys_created_toast": "API key created",
-    "apikeys_deleted_toast": "API key revoked"
+    "apikeys_deleted_toast": "API key revoked",
+    "apikeys_delete_confirm": "Revoke this API key? Scripts using it will stop working.",
+    "current_password": "Current password",
+    "current_password_hint": "Required to change your email address or password.",
+    "password_hint": "Only fill this in if you want to set a new password.",
+    "profile_saved": "Profile updated",
+    "team_remove_confirm": "Remove this member from the workspace?",
+    "workspace_saved": "Workspace updated"
   },
   "monitor": {
     "back": "Back to Dashboard",
@@ -404,7 +460,26 @@
     "heartbeat_grace": "Grace Period (minutes)",
     "heartbeat_grace_desc": "How long to wait after a missed heartbeat before raising an alert.",
     "accepted_status_codes": "Accepted Status Codes (optional)",
-    "accepted_status_codes_desc": "Leave empty to treat anything below 400 as healthy. For services with no health endpoint that return 404 at the root, use \"200-299,404\". Single codes or ranges, comma separated."
+    "accepted_status_codes_desc": "Leave empty to treat anything below 400 as healthy. For services with no health endpoint that return 404 at the root, use \"200-299,404\". Single codes or ranges, comma separated.",
+    "7_days_ago": "7 days ago",
+    "confirm_delete_maintenance": "Delete this maintenance window?",
+    "created": "Created",
+    "error": "Error",
+    "event_degraded": "Slow response",
+    "event_operational": "Service operational",
+    "event_outage": "Outage detected",
+    "heartbeat_url": "Heartbeat URL",
+    "heartbeat_url_desc": "Call this address (GET) from your cron job or script on every successful run. If no call arrives within the interval plus the grace period, an alert is sent.",
+    "incident_outage": "Outage",
+    "incident_recovery": "Recovered",
+    "toast_invalid_number": "Fill in all number fields",
+    "toast_maintenance_added": "Maintenance window added",
+    "toast_maintenance_add_failed": "Could not add the maintenance window",
+    "toast_maintenance_deleted": "Maintenance window deleted",
+    "toast_maintenance_delete_failed": "Could not delete the maintenance window",
+    "toast_maintenance_range": "The end time must be after the start time",
+    "toast_settings_saved": "Settings saved",
+    "toast_settings_failed": "Could not save the settings"
   },
   "status_page": {
     "powered_by": "Powered by",
@@ -425,7 +500,10 @@
     "password_placeholder": "Password",
     "unlock": "Unlock",
     "wrong_password": "Incorrect password.",
-    "unlock_failed": "Could not unlock, please try again."
+    "unlock_failed": "Could not unlock, please try again.",
+    "not_found_title": "Status page not found",
+    "not_found_desc": "Check the address, or ask the page owner for the correct link.",
+    "partial_issues": "Some systems have issues"
   },
   "status_pages": {
     "public_access": "Public Access",
@@ -460,7 +538,17 @@
     "password_keep": "Leave empty to keep current",
     "password_placeholder": "At least 8 characters",
     "password_desc": "With a password set, the page opens only to people who know it; until it is entered the server sends no service names or statuses at all.",
-    "password_remove": "Remove password protection"
+    "password_remove": "Remove password protection",
+    "confirm_delete": "Delete this status page?",
+    "description_placeholder": "All systems operational.",
+    "locations_count": "{count} locations",
+    "password_protected": "Password",
+    "toast_created": "Status page created",
+    "toast_updated": "Status page updated",
+    "toast_deleted": "Status page deleted",
+    "toast_delete_failed": "Could not delete the status page",
+    "toast_load_failed": "Could not load status pages",
+    "toast_save_failed": "Could not save the status page"
   },
   "pricing": {
     "badge": "Simple Pricing",

@@ -41,8 +41,10 @@ export const monitorBaseSchema = z.object({
   responseTimeThreshold: z.number().int().min(100).max(60000).optional().nullable(),
   notifyOnDegraded: z.boolean().optional(),
   sslCheckEnabled: z.boolean().optional(),
-  status: z.string().optional(),
-  currentStatus: z.string().optional(),
+  // Yalnizca yasam dongusu durumu istemciden yazilabilir. currentStatus olcum
+  // sonucudur ve yalnizca pinger tarafindan yazilir; onceden istemci serbest
+  // metin gonderip durum sayfasinda sahte "up" gosterebiliyordu.
+  status: z.enum(['up', 'paused']).optional(),
   monitorType: monitorTypeEnum.optional(),
   port: z.number().int().min(1).max(65535).optional().nullable(),
   expectedKeyword: z.string().max(500).optional().nullable(),
@@ -67,25 +69,35 @@ const monitorCreateDefaults = {
 
 // Target validation per monitor type. HTTP requires a valid http(s) URL
 // (prevents javascript:, file:, etc.); TCP/PING require a host; HEARTBEAT needs none.
-// Skipped on partial updates that don't include monitorType.
-export const validateMonitorTarget = (data: any, ctx: any) => {
-  if (data.monitorType === undefined || data.monitorType === 'HEARTBEAT') return;
-  if (!data.url) {
-    ctx.addIssue({ code: 'custom', path: ['url'], message: 'URL/host is required for this monitor type' });
-    return;
-  }
+// Returns an error message or null. The update route calls this on the MERGED
+// record (existing row + patch), because a partial PUT usually omits monitorType.
+export function monitorTargetError(data: { monitorType?: string | null; url?: string | null }): string | null {
+  if (!data.monitorType || data.monitorType === 'HEARTBEAT') return null;
+  if (!data.url) return 'URL/host is required for this monitor type';
   if (data.monitorType === 'HTTP') {
     try {
       const u = new URL(data.url);
       if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error();
     } catch {
-      ctx.addIssue({ code: 'custom', path: ['url'], message: 'A valid http(s) URL is required for HTTP monitors' });
+      return 'A valid http(s) URL is required for HTTP monitors';
     }
+  } else if (/[\s/]/.test(data.url)) {
+    return 'Enter a bare host name or IP address (no scheme, path or spaces)';
   }
+  return null;
+}
+
+export const validateMonitorTarget = (data: any, ctx: any) => {
+  if (data.monitorType === undefined) return;
+  const message = monitorTargetError(data);
+  if (message) ctx.addIssue({ code: 'custom', path: ['url'], message });
 };
 
 export const monitorCreateSchema = monitorBaseSchema.extend(monitorCreateDefaults).superRefine(validateMonitorTarget);
-export const monitorUpdateSchema = monitorBaseSchema.partial().superRefine(validateMonitorTarget);
+// workspaceId guncellemede YOK: yetki yalnizca mevcut workspace icin kontrol
+// edildiginden, govdeye baska bir workspace id'si yazmak monitoru o hesaba
+// tasiyordu.
+export const monitorUpdateSchema = monitorBaseSchema.omit({ workspaceId: true }).partial().superRefine(validateMonitorTarget);
 
 // Same fix as above: `monitorIds` must NOT default to `[]` on the update
 // schema, or editing just a status page's title (without resending the
@@ -96,19 +108,20 @@ export const statusPageBaseSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().max(500).optional().nullable(),
   slug: z.string().regex(/^[A-Za-z0-9-]{1,64}$/, 'Slug may only contain letters, numbers and hyphens (max 64)'),
-  monitorIds: z.array(z.string().uuid()).max(200).optional(),
+  monitorIds: z.array(z.string().uuid()).max(2000).optional(),
+  themeColor: z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i).optional(),
   // Lokasyon (grup) baglari. monitorIds ile ayni tuzak gecerli: update
   // semasinda .default([]) OLMAMALI, yoksa yalnizca basligi degistiren bir PUT
   // sayfadaki tum gruplari koparir.
-  groupIds: z.array(z.string().uuid()).max(200).optional(),
+  groupIds: z.array(z.string().uuid()).max(500).optional(),
   showGroupMembers: z.boolean().optional(),
   // Sifre: bos string "korumayi kaldir" demek, bu yuzden min(8) yalnizca dolu
   // degerlere uygulanir. undefined ise mevcut sifreye dokunulmaz.
   password: z.union([z.literal(''), z.string().min(8).max(128)]).optional()
 });
 export const statusPageCreateSchema = z.object({ workspaceId: z.string().uuid() }).extend(statusPageBaseSchema.shape).extend({
-  monitorIds: z.array(z.string().uuid()).max(200).default([]),
-  groupIds: z.array(z.string().uuid()).max(200).default([])
+  monitorIds: z.array(z.string().uuid()).max(2000).default([]),
+  groupIds: z.array(z.string().uuid()).max(500).default([])
 });
 export const statusPageUpdateSchema = statusPageBaseSchema.partial();
 
@@ -118,10 +131,22 @@ export const maintenanceWindowCreateSchema = z.object({
   endTime: z.coerce.date()
 });
 
+// Formlar bos alanlari '' olarak gonderir; '' "degistirme" demektir. Onceden
+// bos parola alani min(8)'e takildigi icin profil hic kaydedilemiyordu.
+const emptyToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 export const userUpdateSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  email: z.string().email().optional(),
-  password: z.string().min(8).max(128).optional()
+  name: z.preprocess(emptyToUndefined, z.string().trim().min(1).max(100).optional()),
+  email: z.preprocess(emptyToUndefined, z.string().trim().toLowerCase().email().optional()),
+  password: z.preprocess(emptyToUndefined, z.string().min(8).max(128).optional()),
+  // E-posta veya parola degisirken zorunlu (route kontrol eder).
+  currentPassword: z.preprocess(emptyToUndefined, z.string().max(128).optional())
+});
+
+export const adminBlockSchema = z.object({ isBlocked: z.boolean() });
+export const adminRoleSchema = z.object({ role: z.enum(['USER', 'SYSTEM_ADMIN']) });
+export const adminSubscriptionSchema = z.object({
+  plan: z.enum(['FREE', 'PRO']),
+  expiresAt: z.coerce.date().optional().nullable()
 });
 
 // --- Faz 3.5: lokasyon (composite) alarmi ---

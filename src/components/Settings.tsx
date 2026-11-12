@@ -3,14 +3,18 @@ import { Settings as SettingsIcon, User, Briefcase, Mail, Type, Lock, CheckCircl
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { useTranslation } from '../lib/i18n';
 
 export default function Settings({ user, workspace }: { user: any; workspace: any }) {
   const { t } = useTranslation();
+  const { updateUser } = useAuth();
+  const isOwner = !!workspace && workspace.userId === user?.id;
   const [profileForm, setProfileForm] = useState({
     name: user?.name || '',
     email: user?.email || '',
-    password: ''
+    password: '',
+    currentPassword: ''
   });
   const [workspaceForm, setWorkspaceForm] = useState({
     name: workspace?.name || '',
@@ -28,6 +32,12 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
 
   // --- Faz 1.4: Two-factor authentication ---
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(!!user?.twoFactorEnabled);
+  // Kullanici profili login'den sonra arka planda tazeleniyor; 2FA durumu ve
+  // profil formu gelen degerle esitlensin.
+  useEffect(() => { setTwoFactorEnabled(!!user?.twoFactorEnabled); }, [user?.twoFactorEnabled]);
+  useEffect(() => {
+    setProfileForm(f => ({ ...f, name: user?.name || '', email: user?.email || '' }));
+  }, [user?.id, user?.name, user?.email]);
   const [twoFaStep, setTwoFaStep] = useState<'idle' | 'setup' | 'disable'>('idle');
   const [qrCode, setQrCode] = useState('');
   const [manualSecret, setManualSecret] = useState('');
@@ -143,6 +153,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
   };
 
   const handleDeleteApiKey = async (id: string) => {
+    if (!window.confirm(t('settings.apikeys_delete_confirm'))) return;
     try {
       await api.delete(`/api-keys/${id}`);
       setApiKeys(apiKeys.filter(k => k.id !== id));
@@ -188,6 +199,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
   };
 
   const handleRemoveMember = async (memberId: string) => {
+    if (!window.confirm(t('settings.team_remove_confirm'))) return;
     try {
       await api.delete(`/workspaces/${workspace.id}/members/${memberId}`);
       setMembers(members.filter(m => m.memberId !== memberId));
@@ -201,12 +213,11 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
     e.preventDefault();
     setLoading(true);
     try {
-      await api.put('/user', profileForm);
-      toast.success('Profile settings successfully updated', {
-        description: 'Your changes have been securely saved.'
-      });
-      // Clear password field after success
-      setProfileForm({ ...profileForm, password: '' });
+      const res = await api.put('/user', profileForm);
+      updateUser({ name: res.data.name, email: res.data.email }, res.data.token);
+      toast.success(t('settings.profile_saved'));
+      // Parola alanlari basaridan sonra temizlenir
+      setProfileForm({ ...profileForm, password: '', currentPassword: '' });
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Failed to update user profile');
     } finally {
@@ -220,9 +231,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
     setLoading(true);
     try {
       await api.put(`/workspaces/${workspace.id}`, workspaceForm);
-      toast.success('Workspace successfully updated', {
-        description: 'Changes apply across your organization immediately.'
-      });
+      toast.success(t('settings.workspace_saved'));
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Failed to update workspace');
     } finally {
@@ -459,7 +468,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
                       {member.name && <p className="text-xs text-zinc-500 font-mono mt-0.5">{member.email}</p>}
                     </div>
                   </div>
-                  {member.role !== 'OWNER' && (
+                  {member.role !== 'OWNER' && (isOwner || member.id === user?.id) && (
                     <button
                       onClick={() => handleRemoveMember(member.memberId)}
                       className="opacity-0 group-hover/member:opacity-100 transition-opacity text-zinc-600 hover:text-red-400 p-2 rounded-xl hover:bg-red-500/10"
@@ -763,8 +772,26 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
                   onChange={(e) => setProfileForm({...profileForm, password: e.target.value})}
                 />
               </div>
-              <p className="text-zinc-600 text-xs italic">Only fill this if you want to set a new password.</p>
+              <p className="text-zinc-600 text-xs italic">{t('settings.password_hint')}</p>
             </div>
+
+            {(profileForm.password || (profileForm.email && profileForm.email.trim().toLowerCase() !== (user?.email || '').toLowerCase())) && (
+              <div className="space-y-4">
+                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('settings.current_password')}</label>
+                <div className="relative">
+                  <Lock className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
+                  <input
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold text-white placeholder-zinc-700"
+                    value={profileForm.currentPassword}
+                    onChange={(e) => setProfileForm({ ...profileForm, currentPassword: e.target.value })}
+                  />
+                </div>
+                <p className="text-zinc-600 text-xs italic">{t('settings.current_password_hint')}</p>
+              </div>
+            )}
 
             <div className="flex justify-end pt-4">
               <button 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, AlertTriangle, CheckCircle2, XCircle, Clock, ShieldAlert, Activity, Filter, RefreshCw, Hash, ExternalLink } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
+import { tr as trLocale } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import api from '../lib/api';
 import { connectSocket } from '../lib/socket';
@@ -11,7 +12,7 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active'>('all');
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
 
   useEffect(() => {
     if (!workspace) return;
@@ -59,7 +60,7 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
 
         if (isIncident && (wasNormal || isDifferentIncident)) {
           lastDownTime = new Date(curr.timestamp);
-          lastDownError = curr.errorMessage || (curr.status === 0 ? `HTTP ${curr.statusCode}` : `Performance degraded`);
+          lastDownError = curr.errorMessage || (curr.status === 0 ? `HTTP ${curr.statusCode}` : t('alerts.performance_degraded'));
           results.push({
             id: `${curr.id}-${curr.status === 0 ? 'down' : 'degraded'}`,
             monitor: curr.monitor,
@@ -90,7 +91,9 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
       }
 
       // If still down at the end of the logs
-      if (lastDownTime && monitorLogs[monitorLogs.length - 1].status === 0) {
+      // Sunucu artik yalnizca durum gecislerini donuyor; son gecis sorunluysa
+      // (down VEYA degraded) olay hala aktiftir.
+      if (lastDownTime && monitorLogs[monitorLogs.length - 1].status !== 1) {
          // It's actively down
          const lastLog = monitorLogs[monitorLogs.length - 1];
          // We already pushed the initial DOWN event above, so we don't push another.
@@ -103,7 +106,7 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
     });
 
     return results.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  }, [logs]);
+  }, [logs, t]);
 
   const filteredIncidents = filter === 'active' ? incidents.filter(i => i.isActive) : incidents;
   const activeCount = incidents.filter(i => i.isActive).length;
@@ -127,7 +130,7 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
             className="flex items-center gap-2 text-red-500 font-bold text-xs uppercase tracking-[0.2em] mb-3"
           >
             <Bell className="w-4 h-4" />
-            Global Alerts Feed
+            {t('alerts.feed_label')}
           </motion.div>
           <motion.h1 
             initial={{ opacity: 0, y: 10 }}
@@ -265,7 +268,7 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
                         )}
 
                         <div className="flex items-center gap-1.5 text-zinc-500 ml-auto md:ml-0">
-                          <Clock className="w-3 h-3" /> {formatDistanceToNow(incident.timestamp, { addSuffix: true })}
+                          <Clock className="w-3 h-3" /> {formatDistanceToNow(incident.timestamp, { addSuffix: true, locale: language === 'tr' ? trLocale : undefined })}
                           <span className="hidden sm:inline">({format(incident.timestamp, 'HH:mm:ss')})</span>
                         </div>
                       </div>

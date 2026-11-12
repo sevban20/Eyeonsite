@@ -12,13 +12,18 @@ import {
   History, Hash, Timer, ShieldCheck, Play, Pause, MessageSquare, Video, Lock, Wifi, AlertCircle, Calendar, Plus, Trash2
 } from 'lucide-react';
 import { format, subDays, formatDistanceToNow } from 'date-fns';
+import { tr as trLocale } from 'date-fns/locale';
+import { monitorStatusView } from './Dashboard';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { useTranslation } from '../lib/i18n';
 
 export default function MonitorDetail({ user, workspace }: any) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const dateLocale = language === 'tr' ? trLocale : undefined;
   const { id } = useParams();
+  const [incidentRows, setIncidentRows] = useState<any[]>([]);
+  const [copiedHeartbeat, setCopiedHeartbeat] = useState(false);
   const navigate = useNavigate();
   const [monitor, setMonitor] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
@@ -54,11 +59,8 @@ export default function MonitorDetail({ user, workspace }: any) {
 
   const prevStatusRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-  }, []);
+  // Tarayici bildirim izni artik sayfa acilir acilmaz istenmiyor (baglamsiz
+  // izin istegi tarayicilarca engelleniyor); izin verilmisse bildirim gosterilir.
 
   useEffect(() => {
     if (monitor && monitor.currentStatus) {
@@ -118,7 +120,17 @@ export default function MonitorDetail({ user, workspace }: any) {
         genericWebhook: monitor.genericWebhook || ''
       });
     }
-  }, [monitor]);
+    // Yalnizca baska bir monitor acilinca doldurulur. Onceden her socket
+    // guncellemesi formu sifirliyor, kaydedilmemis degisiklikler kayboluyordu.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monitor?.id]);
+
+  // Durum degisince olay listesini tazele (yeni olay / toparlanma).
+  useEffect(() => {
+    if (!id || !monitor?.currentStatus) return;
+    api.get(`/monitors/${id}/incidents`).then(res => setIncidentRows(res.data)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monitor?.currentStatus]);
 
   // Join the workspace room for realtime updates once the monitor is loaded
   useEffect(() => {
@@ -160,7 +172,7 @@ export default function MonitorDetail({ user, workspace }: any) {
         const cached = sessionStorage.getItem(cacheKey);
         if (cached) {
           const { data, timestamp } = JSON.parse(cached);
-          if (Date.now() - timestamp < 1000 * 60 * 60) {
+          if (Date.now() - timestamp < 1000 * 60 * 2) {
             setUptimeStats(data);
             return;
           }
@@ -180,7 +192,7 @@ export default function MonitorDetail({ user, workspace }: any) {
         const cached = sessionStorage.getItem(cacheKey);
         if (cached) {
           const { data, timestamp } = JSON.parse(cached);
-          if (Date.now() - timestamp < 1000 * 60 * 60) {
+          if (Date.now() - timestamp < 1000 * 60 * 2) {
             const parsedData = data.map((d: any) => ({ ...d, date: new Date(d.date) }));
             setAvailabilityHistory(parsedData);
             return;
@@ -199,6 +211,15 @@ export default function MonitorDetail({ user, workspace }: any) {
       }
     };
 
+    const fetchIncidents = async () => {
+      try {
+        const res = await api.get(`/monitors/${id}/incidents`);
+        setIncidentRows(res.data);
+      } catch (err) {
+        console.error('Error fetching incidents:', err);
+      }
+    };
+
     const fetchMaintenanceWindows = async () => {
       try {
         const res = await api.get(`/maintenance-windows?monitorId=${id}`);
@@ -213,6 +234,7 @@ export default function MonitorDetail({ user, workspace }: any) {
     fetchStats();
     fetchHistory();
     fetchMaintenanceWindows();
+    fetchIncidents();
 
     // Sunucu guncellemeleri ~1 sn'lik paketler halinde gelir.
     const handleMonitorsUpdated = (batch: any[]) => {
@@ -247,16 +269,21 @@ export default function MonitorDetail({ user, workspace }: any) {
     ? ((logs.filter(l => l.status === 1 || l.status === 2).length / logs.length) * 100).toFixed(2)
     : '100.00';
 
-  const avgResponseTime = logs.length > 0
-    ? Math.round(logs.reduce((acc, curr) => acc + curr.responseTime, 0) / logs.length)
+  // Yanit suresi istatistikleri yalnizca BASARILI kontrollerden: zaman asimina
+  // dusen kontroller 10.000 ms olarak ortalamayi ve yuzdelikleri bozuyordu.
+  const okLogs = logs.filter(l => l.status !== 0);
+  const avgResponseTime = okLogs.length > 0
+    ? Math.round(okLogs.reduce((acc, curr) => acc + curr.responseTime, 0) / okLogs.length)
     : 0;
 
-  const minResponseTime = logs.length > 0 ? Math.min(...logs.map(l => l.responseTime)) : 0;
-  const maxResponseTime = logs.length > 0 ? Math.max(...logs.map(l => l.responseTime)) : 0;
+  const minResponseTime = okLogs.length > 0 ? Math.min(...okLogs.map(l => l.responseTime)) : 0;
+  const maxResponseTime = okLogs.length > 0 ? Math.max(...okLogs.map(l => l.responseTime)) : 0;
+  const uptimeColor = Number(uptimePercentage) >= 99 ? 'text-green-500' : Number(uptimePercentage) >= 95 ? 'text-amber-500' : 'text-red-500';
+  const uptimeBar = Number(uptimePercentage) >= 99 ? 'bg-green-500' : Number(uptimePercentage) >= 95 ? 'bg-amber-500' : 'bg-red-500';
 
   const percentiles = React.useMemo(() => {
-    if (logs.length === 0) return { p50: 0, p95: 0, p99: 0 };
-    const sorted = [...logs].map(l => l.responseTime).sort((a, b) => a - b);
+    if (okLogs.length === 0) return { p50: 0, p95: 0, p99: 0 };
+    const sorted = okLogs.map(l => l.responseTime).sort((a, b) => a - b);
     const getPercentile = (p: number) => {
       const idx = Math.floor((p / 100) * sorted.length);
       return sorted[Math.min(idx, sorted.length - 1)];
@@ -289,49 +316,37 @@ export default function MonitorDetail({ user, workspace }: any) {
     })).sort((a, b) => b.value - a.value);
   }, [logs]);
 
+  // Olaylar sunucudaki durum gecislerinden (/incidents, son 30 gun) kurulur.
+  // Onceden yalnizca son 50 log'a bakiliyordu: surekli down olan monitorde
+  // "olay saptanmadi" yaziyordu ve degraded (2) gecisleri yok sayiliyordu.
   const incidents = React.useMemo(() => {
     const results: any[] = [];
-    let lastDownTime: Date | null = null;
-    let lastDownError: string | null = null;
-
-    for (let i = 1; i < logs.length; i++) {
-      const prev = logs[i - 1];
-      const curr = logs[i];
-      if (prev.status === 1 && curr.status === 0) {
-        lastDownTime = curr.timestamp;
-        lastDownError = curr.errorMessage || null;
-        results.push({
-          type: 'DOWN',
-          timestamp: lastDownTime,
-          statusCode: curr.statusCode,
-          errorMessage: lastDownError
-        });
-      } else if (prev.status === 0 && curr.status === 1) {
-        const upTime = curr.timestamp;
-        let duration = null;
-        if (lastDownTime && upTime) {
-          const diff = upTime.getTime() - lastDownTime.getTime();
-          const minutes = Math.floor(diff / 60000);
-          const seconds = Math.floor((diff % 60000) / 1000);
-          duration = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-        }
-        results.push({
-          type: 'UP',
-          timestamp: upTime,
-          statusCode: curr.statusCode,
-          duration,
-          errorMessage: curr.errorMessage || null
-        });
-        lastDownTime = null;
-        lastDownError = null;
+    const rows = [...incidentRows].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    let startedAt: Date | null = null;
+    for (const row of rows) {
+      const ts = new Date(row.timestamp);
+      if (row.status !== 1 && !startedAt) {
+        startedAt = ts;
+        results.push({ type: 'DOWN', timestamp: ts, statusCode: row.statusCode, errorMessage: row.errorMessage || null, active: true });
+      } else if (row.status === 1 && startedAt) {
+        const diff = ts.getTime() - startedAt.getTime();
+        const hours = Math.floor(diff / 3600000);
+        const minutes = Math.floor((diff % 3600000) / 60000);
+        const seconds = Math.floor((diff % 60000) / 1000);
+        const duration = hours > 0 ? `${hours}h ${minutes}m` : minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+        const open = results[results.length - 1];
+        if (open) open.active = false;
+        results.push({ type: 'UP', timestamp: ts, statusCode: row.statusCode, duration, errorMessage: null });
+        startedAt = null;
       }
     }
     return results.reverse();
-  }, [logs]);
+  }, [incidentRows]);
 
   const responseTimeDistribution = React.useMemo(() => {
     if (logs.length === 0) return [];
-    const times = logs.map(l => l.responseTime);
+    const times = logs.filter(l => l.status !== 0).map(l => l.responseTime);
+    if (times.length === 0) return [];
     const min = Math.min(...times);
     const max = Math.max(...times);
     const bucketSize = Math.max(1, Math.ceil((max - min) / 10));
@@ -357,17 +372,31 @@ export default function MonitorDetail({ user, workspace }: any) {
     e.preventDefault();
     if (!id) return;
     try {
-      await api.put(`/monitors/${id}`, settings);
-      toast.success('Settings saved successfully');
-    } catch (error) {
+      const payload: any = { ...settings };
+      // Bos birakilan sayi alanlari NaN olarak gidip genel bir hataya yol aciyordu.
+      for (const key of ['interval', 'alertThreshold', 'heartbeatGrace', 'port']) {
+        if (typeof payload[key] === 'number' && Number.isNaN(payload[key])) {
+          toast.error(t('monitor.toast_invalid_number'));
+          return;
+        }
+      }
+      if (monitor?.monitorType !== 'TCP') delete payload.port;
+      const res = await api.put(`/monitors/${id}`, payload);
+      setMonitor(res.data);
+      toast.success(t('monitor.toast_settings_saved'));
+    } catch (error: any) {
       console.error('Error saving settings:', error);
-      toast.error('Failed to save settings');
+      toast.error(error?.response?.data?.error || t('monitor.toast_settings_failed'));
     }
   };
 
   const handleAddMaintenance = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id) return;
+    if (new Date(newMaintenance.endTime) <= new Date(newMaintenance.startTime)) {
+      toast.error(t('monitor.toast_maintenance_range'));
+      return;
+    }
     try {
       const res = await api.post('/maintenance-windows', {
         monitorId: id,
@@ -376,19 +405,20 @@ export default function MonitorDetail({ user, workspace }: any) {
       });
       setMaintenanceWindows([...maintenanceWindows, res.data]);
       setShowAddMaintenance(false);
-      toast.success('Maintenance window added');
-    } catch (err) {
-      toast.error('Failed to add maintenance window');
+      toast.success(t('monitor.toast_maintenance_added'));
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || t('monitor.toast_maintenance_add_failed'));
     }
   };
 
   const deleteMaintenanceWindow = async (windowId: string) => {
+    if (!window.confirm(t('monitor.confirm_delete_maintenance'))) return;
     try {
       await api.delete(`/maintenance-windows/${windowId}`);
       setMaintenanceWindows(maintenanceWindows.filter(w => w.id !== windowId));
-      toast.success('Maintenance window deleted');
+      toast.success(t('monitor.toast_maintenance_deleted'));
     } catch (err) {
-      toast.error('Failed to delete maintenance window');
+      toast.error(t('monitor.toast_maintenance_delete_failed'));
     }
   };
 
@@ -396,13 +426,12 @@ export default function MonitorDetail({ user, workspace }: any) {
     if (!id || !monitor) return;
     const newStatus = monitor.status === 'paused' ? 'up' : 'paused';
     try {
-      await api.put(`/monitors/${id}`, { status: newStatus });
-      toast.success(`Monitor ${newStatus === 'paused' ? 'paused' : 'resumed'}`, {
-        description: `${monitor.name} is now ${newStatus === 'paused' ? 'paused' : 'active'}.`
-      });
+      const res = await api.put(`/monitors/${id}`, { status: newStatus });
+      setMonitor(res.data);
+      toast.success(newStatus === 'paused' ? t('dashboard.toast_paused') : t('dashboard.toast_resumed'), { description: monitor.name });
     } catch (error) {
       console.error('Error toggling status:', error);
-      toast.error('Failed to update monitor status');
+      toast.error(t('dashboard.toast_status_failed'));
     }
   };
 
@@ -441,16 +470,10 @@ export default function MonitorDetail({ user, workspace }: any) {
               className="flex-1"
             >
               <div className="flex items-center gap-4 mb-4">
-                <div className={`w-3 h-3 rounded-full animate-pulse ${monitor.status === 'paused' ? 'bg-zinc-500' :
-                    monitor.currentStatus === 'up' ? 'bg-green-500' : 'bg-red-500'
-                  }`} />
+                <div className={`w-3 h-3 rounded-full animate-pulse ${monitorStatusView(monitor).dot}`} />
                 <h1 className="text-4xl lg:text-5xl font-black font-display tracking-tight text-white">{monitor.name}</h1>
-                <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${monitor.status === 'paused' ? 'bg-zinc-800 text-zinc-400' :
-                    monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
-                      monitor.currentStatus === 'degraded' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' :
-                        'bg-red-500/10 text-red-500 border border-red-500/20'
-                  }`}>
-                  {monitor.status === 'paused' ? t('dashboard.paused') : monitor.currentStatus === 'up' ? t('dashboard.operational') : monitor.currentStatus === 'degraded' ? t('dashboard.degraded') : t('dashboard.down')}
+                <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${monitorStatusView(monitor).badge}`}>
+                  {t(`dashboard.${monitorStatusView(monitor).key}`)}
                 </div>
                 <button
                   onClick={toggleStatus}
@@ -464,11 +487,18 @@ export default function MonitorDetail({ user, workspace }: any) {
                 </button>
               </div>
               <div className="flex flex-wrap gap-6 text-sm font-medium text-zinc-500">
-                <a href={monitor.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-white transition-colors">
-                  <Globe className="w-4 h-4" />
-                  {monitor.url}
-                  <ExternalLink className="w-3 h-3 opacity-50" />
-                </a>
+                {monitor.monitorType === 'HTTP' && monitor.url ? (
+                  <a href={monitor.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-white transition-colors">
+                    <Globe className="w-4 h-4" />
+                    {monitor.url}
+                    <ExternalLink className="w-3 h-3 opacity-50" />
+                  </a>
+                ) : monitor.url ? (
+                  <span className="flex items-center gap-2">
+                    <Globe className="w-4 h-4" />
+                    {monitor.url}{monitor.port ? `:${monitor.port}` : ''}
+                  </span>
+                ) : null}
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4" />
                   {t('dashboard.interval')}: {monitor.interval}s
@@ -479,9 +509,27 @@ export default function MonitorDetail({ user, workspace }: any) {
                     {monitor.method} {t('dashboard.method')}
                   </div>
                 )}
+                {monitor.monitorType === 'HEARTBEAT' && (() => {
+                  // Heartbeat adresi onceden arayuzde hic gosterilmiyordu.
+                  const hbUrl = `${window.location.origin}/api/heartbeat/${monitor.id}`;
+                  return (
+                    <div className="w-full flex flex-wrap items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-2xl">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{t('monitor.heartbeat_url')}</span>
+                      <code className="text-xs font-mono text-zinc-200 break-all flex-1">{hbUrl}</code>
+                      <button
+                        type="button"
+                        onClick={() => { navigator.clipboard?.writeText(hbUrl); setCopiedHeartbeat(true); setTimeout(() => setCopiedHeartbeat(false), 2000); }}
+                        className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white"
+                      >
+                        {copiedHeartbeat ? t('common.copied') : t('common.copy')}
+                      </button>
+                      <p className="w-full text-[11px] text-zinc-500">{t('monitor.heartbeat_url_desc')}</p>
+                    </div>
+                  );
+                })()}
                 <div className="flex items-center gap-2">
                   <RefreshCw className="w-4 h-4" />
-                  {t('dashboard.last_check')} {monitor.lastChecked ? formatDistanceToNow(new Date(monitor.lastChecked), { addSuffix: true }) : t('common.never')}
+                  {t('dashboard.last_check')} {monitor.lastChecked ? formatDistanceToNow(new Date(monitor.lastChecked), { addSuffix: true, locale: dateLocale }) : t('common.never')}
                 </div>
               </div>
             </motion.div>
@@ -494,7 +542,7 @@ export default function MonitorDetail({ user, workspace }: any) {
               <div className="glass px-6 py-4 rounded-3xl border border-white/5 min-w-[140px] relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-16 h-16 bg-green-500/5 blur-2xl -z-10 group-hover:bg-green-500/10 transition-colors" />
                 <div className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.2em] mb-1">{t('monitor.uptime')} (24h)</div>
-                <div className="text-2xl font-black text-green-500">{uptimePercentage}%</div>
+                <div className={`text-2xl font-black ${uptimeColor}`}>{uptimePercentage}%</div>
               </div>
               <div className="glass px-6 py-4 rounded-3xl border border-white/5 min-w-[140px] relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-16 h-16 bg-orange-500/5 blur-2xl -z-10 group-hover:bg-orange-500/10 transition-colors" />
@@ -606,7 +654,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                       )}
                     </div>
                     <div className="flex justify-between mt-3 text-[10px] font-mono text-zinc-500 uppercase tracking-widest">
-                      <span>{t('monitor.30_days_ago')}</span>
+                      <span>{t('monitor.7_days_ago')}</span>
                       <span>{t('monitor.today')}</span>
                     </div>
                   </motion.div>
@@ -926,7 +974,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                             </div>
                             <div>
                               <div className="font-bold text-white text-sm mb-1">
-                                {log.status === 1 ? 'Service is Operational' : 'Service Outage Detected'}
+                                {log.status === 1 ? t('monitor.event_operational') : log.status === 2 ? t('monitor.event_degraded') : t('monitor.event_outage')}
                               </div>
                               <div className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">
                                 {checkLabel(log.statusCode)} • {log.responseTime}ms{isHttpMonitor ? ` • ${log.method || 'GET'}` : ''}
@@ -941,7 +989,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                       {logs.length === 0 && (
                         <div className="p-20 text-center">
                           <RefreshCw className="w-10 h-10 text-zinc-800 mx-auto mb-4 animate-spin" />
-                          <p className="text-zinc-500 font-medium italic">Waiting for initial logs...</p>
+                          <p className="text-zinc-500 font-medium italic">{t('monitor.waiting_logs')}</p>
                         </div>
                       )}
                     </div>
@@ -980,10 +1028,10 @@ export default function MonitorDetail({ user, workspace }: any) {
                             </div>
                             <div>
                               <div className={`font-bold text-lg ${incident.type === 'DOWN' ? 'text-red-400' : 'text-emerald-400'}`}>
-                                {incident.type === 'DOWN' ? 'Service Outage' : 'System Recovery'}
+                                {incident.type === 'DOWN' ? t('monitor.incident_outage') : t('monitor.incident_recovery')}
                                 {incident.duration && (
                                   <span className="ml-3 opacity-70 font-normal text-sm">
-                                    (Downtime: {incident.duration})
+                                    ({t('monitor.downtime')}: {incident.duration})
                                   </span>
                                 )}
                               </div>
@@ -992,7 +1040,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                               </div>
                               {incident.errorMessage && (
                                 <div className="text-xs font-mono text-red-400 bg-red-400/10 px-3 py-2 rounded-lg border border-red-400/20 inline-block mt-1">
-                                  Error: {incident.errorMessage}
+                                  {t('monitor.error')}: {incident.errorMessage}
                                 </div>
                               )}
                             </div>
@@ -1328,16 +1376,17 @@ export default function MonitorDetail({ user, workspace }: any) {
                               value={settings.alertThreshold}
                               onChange={e => setSettings({ ...settings, alertThreshold: parseInt(e.target.value) })}
                             />
-                            <span className="text-xs text-zinc-500 font-bold leading-tight">Consecutive failures before<br />triggering an alert notification</span>
+                            <span className="text-xs text-zinc-500 font-bold leading-tight max-w-[220px]">{t('monitor.alert_threshold_desc')}</span>
                           </div>
                         </div>
 
                         <div className="space-y-4">
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Response Time Threshold (ms)</label>
+                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.response_threshold')}</label>
                           <div className="flex items-center gap-4">
                             <input
                               type="number"
-                              min="0"
+                              min="100"
+                              max="60000"
                               step="50"
                               placeholder="e.g. 5000"
                               className="w-32 bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-lg font-black text-center"
@@ -1576,7 +1625,7 @@ export default function MonitorDetail({ user, workspace }: any) {
             )}
 
             {/* DNS Card */}
-            {(monitor?.dnsResolvedIp || monitor?.dnsResolutionTime) && (
+            {!!(monitor?.dnsResolvedIp || monitor?.dnsResolutionTime) && (
               <motion.div
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -1709,7 +1758,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                   <span className="text-white text-xs font-black">10s</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Created</span>
+                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{t('monitor.created')}</span>
                   <span className="text-white text-xs font-black">
                     {monitor.createdAt ? format(new Date(monitor.createdAt), 'MMM d, yyyy') : 'N/A'}
                   </span>
@@ -1730,14 +1779,14 @@ export default function MonitorDetail({ user, workspace }: any) {
                 <div>
                   <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
                     <span>{t('monitor.reliability')}</span>
-                    <span className="text-green-500">{uptimePercentage}%</span>
+                    <span className={uptimeColor}>{uptimePercentage}%</span>
                   </div>
                   <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
                     <motion.div 
                       initial={{ width: 0 }}
                       animate={{ width: `${uptimePercentage}%` }}
                       transition={{ duration: 1, ease: "easeOut" }}
-                      className="h-full bg-green-500"
+                      className={`h-full ${uptimeBar}`}
                     />
                   </div>
                 </div>
