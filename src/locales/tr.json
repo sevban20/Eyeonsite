@@ -240,7 +240,8 @@
     "active_degraded": "Performans Sorunu",
     "downtime": "Kesinti Süresi",
     "loading": "Uyarı Verileri Yükleniyor...",
-    "performance_degraded": "Performans düşüşü"
+    "performance_degraded": "Performans düşüşü",
+    "show_more": "Daha fazla göster ({count} kaldı)"
   },
   "settings": {
     "label": "Çalışma Alanı Ayarları",
@@ -495,7 +496,7 @@
     "degraded": "Performans Sorunu",
     "down": "Çökmüş",
     "no_monitors": "Bu çalışma alanı için yapılandırılmış monitör bulunmuyor.",
-    "circuits": "{count} devre",
+    "circuits": "{count} servis",
     "partial_outage": "Kısmi Kesinti",
     "no_data": "Veri yok",
     "protected_title": "Korumalı Durum Sayfası",

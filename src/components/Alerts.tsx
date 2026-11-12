@@ -109,6 +109,10 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
   }, [logs, t]);
 
   const filteredIncidents = filter === 'active' ? incidents.filter(i => i.isActive) : incidents;
+  // Yuzlerce olay tek seferde (ve tek tek gecikmeli animasyonla) cizilince sayfa
+  // birkac saniye bos gorunuyordu; ilk 100 olay gosterilir, gerisi istege bagli.
+  const [visibleCount, setVisibleCount] = useState(100);
+  useEffect(() => { setVisibleCount(100); }, [filter]);
   const activeCount = incidents.filter(i => i.isActive).length;
 
   if (loading) {
@@ -192,14 +196,13 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
               </div>
             </motion.div>
           ) : (
-            filteredIncidents.map((incident, idx) => (
+            filteredIncidents.slice(0, visibleCount).map((incident, idx) => (
               <motion.div 
                 key={incident.id}
-                layout
-                initial={{ opacity: 0, x: -20, y: 20 }}
-                animate={{ opacity: 1, x: 0, y: 0 }}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9 }}
-                transition={{ duration: 0.3, delay: idx * 0.05 }}
+                transition={{ duration: 0.2, delay: Math.min(idx, 10) * 0.03 }}
                 className="pl-16 relative"
               >
                 {/* Timeline Node */}
@@ -288,6 +291,16 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
             ))
           )}
         </AnimatePresence>
+        {filteredIncidents.length > visibleCount && (
+          <div className="pl-16 pt-4">
+            <button
+              onClick={() => setVisibleCount(c => c + 100)}
+              className="px-5 py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-sm font-bold text-zinc-300 hover:text-white"
+            >
+              {t('alerts.show_more').replace('{count}', String(filteredIncidents.length - visibleCount))}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

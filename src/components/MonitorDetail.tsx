@@ -278,6 +278,9 @@ export default function MonitorDetail({ user, workspace }: any) {
 
   const minResponseTime = okLogs.length > 0 ? Math.min(...okLogs.map(l => l.responseTime)) : 0;
   const maxResponseTime = okLogs.length > 0 ? Math.max(...okLogs.map(l => l.responseTime)) : 0;
+  // Performans puani: 1 sn ve uzeri 0, 0 ms 100. Basarili kontrol yoksa
+  // hesaplanmaz (onceden tum kontroller basarisizken %100 gosteriyordu).
+  const performanceScore = okLogs.length ? Math.round(Math.max(0, 100 - avgResponseTime / 10)) : null;
   const uptimeColor = Number(uptimePercentage) >= 99 ? 'text-green-500' : Number(uptimePercentage) >= 95 ? 'text-amber-500' : 'text-red-500';
   const uptimeBar = Number(uptimePercentage) >= 99 ? 'bg-green-500' : Number(uptimePercentage) >= 95 ? 'bg-amber-500' : 'bg-red-500';
 
@@ -501,7 +504,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                 ) : null}
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4" />
-                  {t('dashboard.interval')}: {monitor.interval}s
+                  {t('dashboard.interval')}: {monitor.interval}
                 </div>
                 {monitor.monitorType === 'HTTP' && (
                   <div className="flex items-center gap-2">
@@ -547,17 +550,17 @@ export default function MonitorDetail({ user, workspace }: any) {
               <div className="glass px-6 py-4 rounded-3xl border border-white/5 min-w-[140px] relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-16 h-16 bg-orange-500/5 blur-2xl -z-10 group-hover:bg-orange-500/10 transition-colors" />
                 <div className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.2em] mb-1">{t('monitor.avg_response')}</div>
-                <div className="text-2xl font-black text-orange-500">{avgResponseTime}<span className="text-xs ml-1 font-bold">ms</span></div>
+                <div className="text-2xl font-black text-orange-500">{okLogs.length ? <>{avgResponseTime}<span className="text-xs ml-1 font-bold">ms</span></> : '—'}</div>
               </div>
               <div className="glass px-6 py-4 rounded-3xl border border-white/5 min-w-[140px] relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-16 h-16 bg-blue-500/5 blur-2xl -z-10 group-hover:bg-blue-500/10 transition-colors" />
                 <div className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.2em] mb-1">{t('monitor.min_response')}</div>
-                <div className="text-2xl font-black text-blue-500">{minResponseTime}<span className="text-xs ml-1 font-bold">ms</span></div>
+                <div className="text-2xl font-black text-blue-500">{okLogs.length ? <>{minResponseTime}<span className="text-xs ml-1 font-bold">ms</span></> : '—'}</div>
               </div>
               <div className="glass px-6 py-4 rounded-3xl border border-white/5 min-w-[140px] relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-16 h-16 bg-purple-500/5 blur-2xl -z-10 group-hover:bg-purple-500/10 transition-colors" />
                 <div className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.2em] mb-1">{t('monitor.max_response')}</div>
-                <div className="text-2xl font-black text-purple-500">{maxResponseTime}<span className="text-xs ml-1 font-bold">ms</span></div>
+                <div className="text-2xl font-black text-purple-500">{okLogs.length ? <>{maxResponseTime}<span className="text-xs ml-1 font-bold">ms</span></> : '—'}</div>
               </div>
             </motion.div>
           </div>
@@ -638,7 +641,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                             >
                               {/* Tooltip */}
                               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max bg-zinc-900 border border-zinc-800 text-white text-xs px-3 py-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl">
-                                <div className="font-bold mb-1">{format(day.date, 'MMM d, yyyy')}</div>
+                                <div className="font-bold mb-1">{format(day.date, 'd MMM yyyy', { locale: dateLocale })}</div>
                                 <div className="text-zinc-400">
                                   {day.uptime === -1 ? t('dashboard.no_data') : t('monitor.uptime_desc').replace('{uptime}', day.uptime.toFixed(2))}
                                 </div>
@@ -929,7 +932,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                                 )}
                               </div>
                               <div className="text-[10px] font-mono text-zinc-500 mb-1">
-                                {format(incident.timestamp, 'MMM d, HH:mm:ss')} • {checkLabel(incident.statusCode)}
+                                {format(incident.timestamp, 'd MMM, HH:mm:ss', { locale: dateLocale })} • {checkLabel(incident.statusCode)}
                               </div>
                               {incident.errorMessage && (
                                 <div className="text-[9px] font-mono text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-400/20 max-w-xs truncate mt-2">
@@ -982,7 +985,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                             </div>
                           </div>
                           <div className="text-zinc-500 text-[10px] font-black uppercase tracking-widest group-hover:text-zinc-300 transition-colors">
-                            {log.timestamp ? format(log.timestamp, 'MMM d, HH:mm:ss') : 'Pending'}
+                            {log.timestamp ? format(log.timestamp, 'd MMM, HH:mm:ss', { locale: dateLocale }) : '—'}
                           </div>
                         </motion.div>
                       ))}
@@ -1036,7 +1039,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                                 )}
                               </div>
                               <div className="text-xs font-mono text-zinc-400 mb-2 mt-1">
-                                {format(incident.timestamp, 'MMMM d, yyyy • HH:mm:ss')}
+                                {format(incident.timestamp, 'd MMMM yyyy • HH:mm:ss', { locale: dateLocale })}
                               </div>
                               {incident.errorMessage && (
                                 <div className="text-xs font-mono text-red-400 bg-red-400/10 px-3 py-2 rounded-lg border border-red-400/20 inline-block mt-1">
@@ -1143,7 +1146,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                               <div className={`w-3 h-3 rounded-full ${isActive ? 'bg-blue-500 animate-pulse' : isUpcoming ? 'bg-amber-500' : 'bg-zinc-600'}`} />
                               <div>
                                 <div className="text-sm font-bold text-white mb-1">
-                                  {format(new Date(win.startTime), 'MMM d, HH:mm')} — {format(new Date(win.endTime), 'MMM d, HH:mm')}
+                                  {format(new Date(win.startTime), 'd MMM, HH:mm', { locale: dateLocale })} — {format(new Date(win.endTime), 'd MMM, HH:mm', { locale: dateLocale })}
                                 </div>
                                 <div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">
                                   {isActive ? t('monitor.active_suppressed') : isUpcoming ? t('monitor.upcoming') : t('monitor.past')}
@@ -1580,7 +1583,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                     {monitor.sslExpiry && (
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{t('monitor.ssl_expiry')}</span>
-                        <span className="text-[11px] font-mono text-zinc-300">{format(new Date(monitor.sslExpiry), 'MMM d, yyyy')}</span>
+                        <span className="text-[11px] font-mono text-zinc-300">{format(new Date(monitor.sslExpiry), 'd MMM yyyy', { locale: dateLocale })}</span>
                       </div>
                     )}
                     {monitor.sslIssuer && (
@@ -1654,7 +1657,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                   {monitor.dnsLastChanged && (
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{t('monitor.dns_last_changed')}</span>
-                      <span className="text-[11px] font-mono text-amber-400">{formatDistanceToNow(new Date(monitor.dnsLastChanged), { addSuffix: true })}</span>
+                      <span className="text-[11px] font-mono text-amber-400">{formatDistanceToNow(new Date(monitor.dnsLastChanged), { addSuffix: true, locale: dateLocale })}</span>
                     </div>
                   )}
                 </div>
@@ -1716,15 +1719,15 @@ export default function MonitorDetail({ user, workspace }: any) {
               <div className="space-y-5">
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">{t('monitor.p50')}</span>
-                  <span className="text-white font-mono text-xs">{percentiles.p50}ms</span>
+                  <span className="text-white font-mono text-xs">{okLogs.length ? `${percentiles.p50}ms` : '—'}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">{t('monitor.p95')}</span>
-                  <span className="text-orange-500 font-mono text-xs font-bold">{percentiles.p95}ms</span>
+                  <span className="text-orange-500 font-mono text-xs font-bold">{okLogs.length ? `${percentiles.p95}ms` : '—'}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">{t('monitor.p99')}</span>
-                  <span className="text-red-500 font-mono text-xs font-bold">{percentiles.p99}ms</span>
+                  <span className="text-red-500 font-mono text-xs font-bold">{okLogs.length ? `${percentiles.p99}ms` : '—'}</span>
                 </div>
               </div>
             </motion.div>
@@ -1760,7 +1763,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider">{t('monitor.created')}</span>
                   <span className="text-white text-xs font-black">
-                    {monitor.createdAt ? format(new Date(monitor.createdAt), 'MMM d, yyyy') : 'N/A'}
+                    {monitor.createdAt ? format(new Date(monitor.createdAt), 'd MMM yyyy', { locale: dateLocale }) : '—'}
                   </span>
                 </div>
               </div>
@@ -1793,12 +1796,12 @@ export default function MonitorDetail({ user, workspace }: any) {
                 <div>
                   <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">
                     <span>{t('monitor.performance')}</span>
-                    <span className="text-orange-500">{Math.max(0, 100 - (avgResponseTime / 10))}%</span>
+                    <span className="text-orange-500">{performanceScore === null ? '—' : `${performanceScore}%`}</span>
                   </div>
                   <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
                     <motion.div 
                       initial={{ width: 0 }}
-                      animate={{ width: `${Math.max(0, 100 - (avgResponseTime / 10))}%` }}
+                      animate={{ width: `${performanceScore ?? 0}%` }}
                       transition={{ duration: 1, ease: "easeOut" }}
                       className="h-full bg-orange-500"
                     />

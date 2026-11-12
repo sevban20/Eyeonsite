@@ -15,7 +15,7 @@ interface DashboardProps {
 }
 
 const MiniAvailabilityHistory = memo(function MiniAvailabilityHistory({ history: rawHistory }: { history?: any[] }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   // Veri artik Dashboard'dan toplu geliyor (/monitors/history-summary).
   const history = (rawHistory || []).map((d: any) => ({ ...d, date: new Date(d.date) }));
 
@@ -34,7 +34,7 @@ const MiniAvailabilityHistory = memo(function MiniAvailabilityHistory({ history:
             <div 
               key={i} 
               className={`flex-1 rounded-sm h-full ${colorClass}`}
-              title={`${format(day.date, 'MMM d')}: ${day.uptime === -1 ? t('dashboard.no_data') : day.uptime.toFixed(2) + '%'}`}
+              title={`${format(day.date, 'd MMM', { locale: language === 'tr' ? trLocale : undefined })}: ${day.uptime === -1 ? t('dashboard.no_data') : day.uptime.toFixed(2) + '%'}`}
             />
           );
         })
@@ -589,7 +589,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
               <div className={`p-2 rounded-xl ${stat.bg}`}>
                 <stat.icon className={`w-5 h-5 ${stat.color}`} />
               </div>
-              <span className="text-zinc-400 text-xs font-bold uppercase tracking-widest">{stat.label}</span>
+              <span className="text-zinc-400 text-[10px] sm:text-xs font-bold uppercase tracking-wide sm:tracking-widest leading-tight min-w-0">{stat.label}</span>
             </div>
             <div className="text-4xl font-bold text-white font-display">{stat.value}</div>
           </motion.div>

@@ -240,7 +240,8 @@
     "active_degraded": "Degraded",
     "downtime": "Downtime",
     "loading": "Loading Alerts Data...",
-    "performance_degraded": "Performance degraded"
+    "performance_degraded": "Performance degraded",
+    "show_more": "Show more ({count} left)"
   },
   "settings": {
     "label": "Workspace Settings",
@@ -492,7 +493,7 @@
     "degraded": "Degraded",
     "down": "Down",
     "no_monitors": "No monitors configured for this workspace.",
-    "circuits": "{count} circuits",
+    "circuits": "{count} services",
     "partial_outage": "Partial Outage",
     "no_data": "No data",
     "protected_title": "Protected Status Page",

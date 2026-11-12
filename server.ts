@@ -1530,12 +1530,16 @@ async function startServer() {
   // ve toparlanmalar) + penceredeki ilk satir sorunluysa o. Uptime hesaplariyla
   // ayni kural: degraded (2) "calisiyor" sayilir, yalnizca 0 kesintidir; olay
   // listesinde ise degraded ayri tur olarak gosterilir.
-  const statusTransitions = async (scope: { workspaceId?: string; monitorId?: string }, days: number, limit: number) => {
+  // perMonitor: her monitor icin en yeni N gecis. Yoksa sik gidip gelen tek bir
+  // monitor (orn. yavas<->normal) toplam sinirini doldurup, haftalardir suren
+  // gercek kesintileri listeden dusuruyordu ("aktif olay" sayaci 0 gorunuyordu).
+  const statusTransitions = async (scope: { workspaceId?: string; monitorId?: string }, days: number, limit: number, perMonitor = 1000) => {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const filter = scope.monitorId
       ? Prisma.sql`p."monitorId" = ${scope.monitorId}`
       : Prisma.sql`m."workspaceId" = ${scope.workspaceId}`;
     const rows = await prisma.$queryRaw<any[]>`
+      WITH tr AS (
       SELECT * FROM (
         SELECT p.id, p."monitorId", p.timestamp, p.status, p."responseTime", p."statusCode", p."errorMessage",
                m.name AS "monitorName", m.url AS "monitorUrl",
@@ -1544,9 +1548,14 @@ async function startServer() {
         WHERE ${filter} AND p.timestamp >= ${since}
       ) t
       WHERE (prev IS NULL AND status <> 1) OR prev <> status
-      ORDER BY timestamp DESC
-      LIMIT ${limit}`;
-    return rows.map(({ monitorName, monitorUrl, prev: _prev, ...r }) => ({
+    ), ranked AS (
+      SELECT tr.*, ROW_NUMBER() OVER (PARTITION BY tr."monitorId" ORDER BY tr.timestamp DESC) AS rn
+      FROM tr
+    )
+    SELECT * FROM ranked WHERE rn <= ${perMonitor}
+    ORDER BY timestamp DESC
+    LIMIT ${limit}`;
+    return rows.map(({ monitorName, monitorUrl, prev: _prev, rn: _rn, ...r }) => ({
       ...r, monitor: { id: r.monitorId, name: monitorName, url: monitorUrl }
     }));
   };
@@ -1757,7 +1766,7 @@ async function startServer() {
       // GECISLERI doner (bkz. statusTransitions); sayfa ayni algoritmayla olaylari
       // kurar. Agir bir sorgu oldugu icin 60 sn onbelleklenir.
       const logs = await cachedSWR(`alerts:${workspaceId}`, 60_000, 5 * 60_000,
-        () => statusTransitions({ workspaceId }, 7, 1000));
+        () => statusTransitions({ workspaceId }, 30, 3000, 40));
       res.json(logs);
     } catch (error: any) {
       serverError(res, error);
@@ -2208,8 +2217,12 @@ async function startServer() {
             .filter((d: any) => d && d.total > 0);
           if (dayRows.length === 0) return { date: dateStr, uptime: -1, status: 'nodata', down: 0 };
 
-          const uptimes = dayRows.map((d: any) => (d.total - d.down) / d.total * 100);
-          const uptime = parseFloat(Math.max(...uptimes).toFixed(2));
+          // Gunluk yuzde, uyelerin TOPLAM basarili kontrol orani. Onceden en iyi
+          // uyenin yuzdesi aliniyordu: 41 servisin 9'u haftalardir down iken lokasyon
+          // %99.97 gorunuyordu. Gunun DURUMU (down / kismi / up) yine yedeklilik
+          // mantigiyla, asagidaki kurallarla belirlenir.
+          const totalChecks = dayRows.reduce((a: number, d: any) => a + d.total, 0);
+          const uptime = parseFloat((((totalChecks - dayRows.reduce((a: number, d: any) => a + d.down, 0)) / totalChecks) * 100).toFixed(2));
           const totalDown = dayRows.reduce((a: number, d: any) => a + d.down, 0);
           const allDown = dayRows.every((d: any) => d.down / d.total > 0.1);
           const anyDown = dayRows.some((d: any) => d.down > 0);

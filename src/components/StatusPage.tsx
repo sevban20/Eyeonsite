@@ -221,7 +221,7 @@ export default function StatusPage() {
         style={{ backgroundColor: statusPage?.themeColor || '#f97316' }}
       />
 
-      <div className="max-w-4xl mx-auto px-6 py-16 md:py-24">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10 md:py-24">
         <motion.header 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -253,7 +253,7 @@ export default function StatusPage() {
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className={`glass p-10 rounded-[3rem] mb-16 flex flex-col md:flex-row items-center gap-8 border relative overflow-hidden ${
+          className={`glass p-6 md:p-10 rounded-[2rem] md:rounded-[3rem] mb-10 md:mb-16 flex flex-col md:flex-row items-center gap-8 border relative overflow-hidden ${
             someDown ? 'border-red-500/20 bg-red-500/5' : someIssue ? 'border-amber-500/20 bg-amber-500/5' : 'border-green-500/20 bg-green-500/5'
           }`}
         >
@@ -288,7 +288,7 @@ export default function StatusPage() {
           transition={{ delay: 0.2 }}
           className="glass border border-white/5 rounded-[3rem] overflow-hidden card-gradient shadow-2xl"
         >
-          <div className="px-10 py-6 border-b border-white/5 flex items-center justify-between">
+          <div className="px-5 md:px-10 py-6 border-b border-white/5 flex items-center justify-between">
             <h3 className="font-black text-white uppercase tracking-widest text-xs">{t('status_page.services')}</h3>
             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{monitors.length} {t('status_pages.total')}</span>
           </div>
@@ -299,7 +299,7 @@ export default function StatusPage() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.3 + (idx * 0.05) }}
                 key={monitor.id} 
-                className="px-10 py-8 flex flex-col gap-6 hover:bg-white/[0.02] transition-colors group/row"
+                className="px-5 py-6 md:px-10 md:py-8 flex flex-col gap-6 hover:bg-white/[0.02] transition-colors group/row"
               >
                 {/* Top Row: Details & Status */}
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
@@ -345,7 +345,7 @@ export default function StatusPage() {
                 {/* Lokasyon uyeleri — sayfa bunu acikca istiyorsa. Yalnizca ad
                     ve durum; adres hicbir zaman gonderilmiyor. */}
                 {monitor.kind === 'location' && monitor.members && monitor.members.length > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-[4.5rem]">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:pl-[4.5rem]">
                     {monitor.members.map((member: any) => (
                       <div key={member.id} className="flex items-center gap-3 text-sm">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${
@@ -400,10 +400,10 @@ export default function StatusPage() {
                       })}
                     </div>
 
-                    <div className="flex items-center justify-between text-[9px] font-black text-zinc-500 uppercase tracking-widest">
-                      <span>{t('monitor.90_days_ago')}</span>
-                      <span className="text-zinc-400">{monitor.avgUptime != null ? `${monitor.avgUptime}% ${t('monitor.uptime').toLowerCase()}` : ''}</span>
-                      <span>{t('monitor.today')}</span>
+                    <div className="flex items-center justify-between gap-3 text-[9px] font-black text-zinc-500 uppercase tracking-wider sm:tracking-widest">
+                      <span className="shrink-0">{t('monitor.90_days_ago')}</span>
+                      <span className="text-zinc-400 text-center">{monitor.avgUptime != null ? `${monitor.avgUptime}% ${t('monitor.uptime').toLowerCase()}` : ''}</span>
+                      <span className="shrink-0">{t('monitor.today')}</span>
                     </div>
                   </div>
                 )}
