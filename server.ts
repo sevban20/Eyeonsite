@@ -7,23 +7,25 @@ import axios from 'axios';
 import { Server } from 'socket.io';
 import http from 'http';
 import https from 'https';
+import net from 'net';
 import ping from 'ping';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
-import { isPrivateIp, resolveTargetIp } from './lib/security';
+import { isPrivateIp, resolveTargetIp, guardedLookup } from './lib/security';
 import { checkSSL, checkDNS, checkTCP } from './lib/network-checks';
 import { isStatusAccepted } from './lib/http-status';
 import {
   monitorCreateSchema, monitorUpdateSchema,
   statusPageCreateSchema, statusPageUpdateSchema,
-  maintenanceWindowCreateSchema, userUpdateSchema,
+  maintenanceWindowCreateSchema, userUpdateSchema, monitorTargetError,
+  adminBlockSchema, adminRoleSchema, adminSubscriptionSchema,
   monitorGroupCreateSchema, monitorGroupUpdateSchema,
   apiKeyCreateSchema, totpVerifySchema
 } from './lib/validation';
@@ -74,6 +76,76 @@ function serverError(res: any, error: any) {
 // Fire-and-forget-safe audit trail writer (see lib/audit.ts / AuditLog model)
 const logAudit = makeAuditLogger(prisma, log);
 
+// Dogrulama hatalari istemciye OKUNABILIR bir metin olarak doner. Onceden
+// `error` alaninda zod'un flatten() nesnesi gidiyordu; arayuz bunu toast'a
+// verdiginde "[object Object]" goruluyor ya da React render'i cokuyordu.
+function badRequest(res: any, zodError: any) {
+  const issue = zodError?.issues?.[0];
+  const field = issue?.path?.length ? `${issue.path.join('.')}: ` : '';
+  return res.status(400).json({ error: `${field}${issue?.message || 'Invalid request'}`, details: zodError?.flatten?.() });
+}
+
+// Giden istekler icin SSRF korumali agent'lar: adres BAGLANTI aninda kontrol
+// edilir (yonlendirmeler ve DNS rebinding dahil). ALLOW_PRIVATE_TARGETS=true
+// ise kendi ic aginizi izlemeniz icin koruma devre disidir.
+const safeHttpAgent = new http.Agent({ lookup: guardedLookup as any });
+const safeHttpsAgent = new https.Agent({ lookup: guardedLookup as any });
+const outboundAgents = () => (ALLOW_PRIVATE_TARGETS ? {} : { httpAgent: safeHttpAgent, httpsAgent: safeHttpsAgent });
+const targetLookup = () => (ALLOW_PRIVATE_TARGETS ? undefined : guardedLookup);
+// IP adresi yazilmis bir yonlendirme hedefinde DNS cozumlemesi olmaz, yani
+// guardedLookup hic cagrilmaz; bu yuzden yonlendirme hedefi ayrica kontrol edilir.
+const blockPrivateRedirect = (options: any) => {
+  const host = String(options?.hostname || options?.host || '').replace(/^\[|\]$/g, '');
+  if (net.isIP(host) && isPrivateIp(host)) throw new Error(`Blocked: redirect to a private/internal address (${host})`);
+};
+const redirectGuard = () => (ALLOW_PRIVATE_TARGETS ? {} : { beforeRedirect: blockPrivateRedirect });
+
+// Bildirim webhook'lari kullanicinin yazdigi adreslere gider; ic aga (metadata
+// servisi, veritabani paneli) POST atilmasin diye ayni koruma burada da var.
+function postWebhook(url: string, body: any) {
+  return axios.post(url, body, { timeout: 10000, maxRedirects: 0, maxContentLength: 1024 * 1024, ...outboundAgents() });
+}
+
+// E-postalar kucuk harfle saklanir; eski karisik harfli kayitlar icin arama
+// buyuk/kucuk harf duyarsizdir.
+function normalizeEmail(email: unknown): string | null {
+  return typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
+}
+async function findUserByEmail(email: unknown) {
+  const e = normalizeEmail(email);
+  if (!e) return null;
+  return prisma.user.findFirst({ where: { email: { equals: e, mode: 'insensitive' } } });
+}
+
+// Istemciye donen kullanici ozeti. Login yaniti eskiden role/2FA bilgisini
+// icermiyordu; admin, sayfayi yenileyene kadar paneline giremiyordu.
+const publicUser = (user: any) => ({
+  id: user.id, email: user.email, name: user.name, role: user.role,
+  plan: user.subscriptionPlan, twoFactorEnabled: user.twoFactorEnabled
+});
+
+// Oturum jetonu. `tv` (tokenVersion) parola degisiminde artirilir; eski
+// jetonlar boylece gecersiz kalir.
+const signSession = (user: any) =>
+  jwt.sign({ id: user.id, email: user.email, tv: user.tokenVersion ?? 0 }, JWT_SECRET, { expiresIn: '7d' });
+
+/**
+ * Bir JWT'yi OTURUM jetonu olarak dogrular. `purpose` alani tasiyan jetonlar
+ * (2FA oncesi ara jeton, durum sayfasi erisim jetonu) oturum degildir ve
+ * reddedilir: onceden 2FA ara jetonu tum API'de gecerliydi, yani parolayi bilen
+ * biri 2FA kodunu hic girmeden hesaba erisebiliyordu. Engellenmis kullanicilar
+ * ve tokenVersion'i eskimis jetonlar da reddedilir.
+ */
+async function verifySessionToken(token: string): Promise<{ id: string; email?: string } | null> {
+  let payload: any;
+  try { payload = jwt.verify(token, JWT_SECRET); } catch { return null; }
+  if (!payload || typeof payload !== 'object' || payload.purpose || typeof payload.id !== 'string') return null;
+  const user = await prisma.user.findUnique({ where: { id: payload.id }, select: { id: true, email: true, isBlocked: true, tokenVersion: true } });
+  if (!user || user.isBlocked) return null;
+  if ((payload.tv ?? 0) !== user.tokenVersion) return null;
+  return { id: user.id, email: user.email };
+}
+
 async function startServer() {
   log('DEBUG: ENTERING startServer()');
   const app = express();
@@ -120,8 +192,8 @@ async function startServer() {
 
     if (looksLikeApiKey(token)) {
       try {
-        const key = await prisma.apiKey.findUnique({ where: { keyHash: hashApiKey(token) } });
-        if (!key) return res.sendStatus(403);
+        const key = await prisma.apiKey.findUnique({ where: { keyHash: hashApiKey(token) }, include: { user: { select: { isBlocked: true } } } });
+        if (!key || key.user?.isBlocked) return res.sendStatus(403);
         prisma.apiKey.update({ where: { id: key.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
         req.user = { id: key.userId, apiKeyId: key.id };
         return next();
@@ -130,11 +202,14 @@ async function startServer() {
       }
     }
 
-    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-      if (err) return res.sendStatus(403);
+    try {
+      const user = await verifySessionToken(token);
+      if (!user) return res.sendStatus(403);
       req.user = user;
       next();
-    });
+    } catch {
+      res.sendStatus(403);
+    }
   };
 
   // Admin Middleware
@@ -345,9 +420,8 @@ async function startServer() {
   // Forgot Password
   app.post('/api/auth/forgot-password', async (req, res) => {
     try {
-      const { email } = req.body;
-      const user = await prisma.user.findUnique({ where: { email } });
-      
+      const user = await findUserByEmail(req.body?.email);
+
       if (user) {
         const token = generateVerifyToken();
         const expires = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 hour
@@ -357,7 +431,7 @@ async function startServer() {
           data: { resetPasswordToken: token, resetPasswordExpires: expires }
         });
 
-        sendPasswordResetEmail(email, token, user.name).catch(e => log(`DEBUG: Reset email error: ${e.message}`));
+        sendPasswordResetEmail(user.email, token, user.name).catch(e => log(`DEBUG: Reset email error: ${e.message}`));
         await logAudit({ userId: user.id, action: 'auth.password_reset.requested', ip: requestIp(req) });
       }
 
@@ -394,7 +468,9 @@ async function startServer() {
           resetPasswordToken: null,
           resetPasswordExpires: null,
           loginAttempts: 0,
-          lockUntil: null
+          lockUntil: null,
+          // Parola sifirlaninca acik tum oturumlar kapanir.
+          tokenVersion: { increment: 1 }
         }
       });
 
@@ -408,7 +484,8 @@ async function startServer() {
   // Register
   app.post('/api/auth/register', async (req, res) => {
     try {
-      const { email, password, name } = req.body;
+      const { password, name } = req.body;
+      const email = normalizeEmail(req.body?.email);
       if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
       if (!z.string().email().safeParse(email).success) return res.status(400).json({ error: 'Invalid email address' });
       if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
@@ -418,7 +495,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Invalid name' });
       }
 
-      const existingUser = await prisma.user.findUnique({ where: { email } });
+      const existingUser = await findUserByEmail(email);
       if (existingUser) return res.status(400).json({ error: 'Email already exists' });
 
       const hashedPassword = await bcrypt.hash(password, 12);
@@ -482,8 +559,8 @@ async function startServer() {
         await prisma.workspace.create({ data: { name: 'My Workspace', userId: user.id } });
       }
 
-      const jwtToken = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-      res.json({ token: jwtToken, user: { id: user.id, email: user.email, name: user.name } });
+      const jwtToken = signSession(user);
+      res.json({ token: jwtToken, user: publicUser(user) });
     } catch (error: any) {
       log(`DEBUG: Verify email error: ${error.message}`);
       res.status(500).json({ error: 'Verification failed' });
@@ -493,10 +570,9 @@ async function startServer() {
   // Resend Verification Email
   app.post('/api/auth/resend-verification', async (req, res) => {
     try {
-      const { email } = req.body;
-      if (!email) return res.status(400).json({ error: 'Email required' });
+      if (!normalizeEmail(req.body?.email)) return res.status(400).json({ error: 'Email required' });
 
-      const user = await prisma.user.findUnique({ where: { email } });
+      const user = await findUserByEmail(req.body.email);
       // Return generic success even if user not found (security: don't reveal existence)
       if (!user || user.emailVerified) {
         return res.json({ message: 'If that email exists and is unverified, a new link has been sent.' });
@@ -510,7 +586,7 @@ async function startServer() {
         data: { emailVerifyToken: token, emailVerifyExpires: expires }
       });
 
-      sendVerificationEmail(email, token, user.name).catch(e => log(`DEBUG: Resend email error: ${e.message}`));
+      sendVerificationEmail(user.email, token, user.name).catch(e => log(`DEBUG: Resend email error: ${e.message}`));
 
       res.json({ message: 'If that email exists and is unverified, a new link has been sent.' });
     } catch (error: any) {
@@ -522,18 +598,13 @@ async function startServer() {
   app.post('/api/auth/login', async (req, res) => {
     try {
       const { email, password } = req.body;
-      if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+      if (!email || typeof password !== 'string' || !password) return res.status(400).json({ error: 'Email and password required' });
 
-      const user = await prisma.user.findUnique({ where: { email } });
+      const user = await findUserByEmail(email);
 
       // Generic error to prevent user enumeration
       if (!user || !user.password) {
         return res.status(400).json({ error: 'Invalid email or password' });
-      }
-
-      // Check if user is blocked
-      if (user.isBlocked) {
-        return res.status(403).json({ error: 'Your account has been blocked by an administrator.' });
       }
 
       // Check account lock
@@ -569,10 +640,14 @@ async function startServer() {
         }
 
         await logAudit({ userId: user.id, action: 'auth.login.failed', ip: requestIp(req) });
-        const remaining = MAX_LOGIN_ATTEMPTS - newAttempts;
-        return res.status(400).json({
-          error: `Invalid email or password. ${remaining} attempt(s) remaining before lockout.`
-        });
+        // Kalan deneme sayisi verilmez: hesap olmayan e-postayla ayni yanit
+        // donmeli, yoksa yanit hesabin var oldugunu ele veriyor.
+        return res.status(400).json({ error: 'Invalid email or password' });
+      }
+
+      // Engel bilgisi yalnizca dogru parolayla gosterilir (enumeration).
+      if (user.isBlocked) {
+        return res.status(403).json({ error: 'Your account has been blocked by an administrator.' });
       }
 
       // Check email verification
@@ -604,9 +679,9 @@ async function startServer() {
         data: { loginAttempts: 0, lockUntil: null }
       });
 
-      const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+      const token = signSession(user);
       await logAudit({ userId: user.id, action: 'auth.login', ip: requestIp(req) });
-      res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
+      res.json({ token, user: publicUser(user) });
     } catch (error: any) {
       log(`DEBUG: Login error: ${error.message}`);
       res.status(500).json({ error: 'Login failed. Please try again.' });
@@ -706,14 +781,14 @@ async function startServer() {
         data: { loginAttempts: 0, lockUntil: null }
       });
 
-      const jwtToken = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+      const jwtToken = signSession(user);
       await logAudit({
         userId: user.id,
         action: usedRecovery ? 'auth.login.2fa_recovery_used' : 'auth.login.2fa',
         ip: requestIp(req),
         metadata: usedRecovery ? { recoveryCodesRemaining } : null
       });
-      res.json({ token: jwtToken, user: { id: user.id, email: user.email, name: user.name } });
+      res.json({ token: jwtToken, user: publicUser(user) });
     } catch (error: any) {
       serverError(res, error);
     }
@@ -754,7 +829,7 @@ async function startServer() {
   app.post('/api/2fa/enable', authenticateToken, async (req: any, res) => {
     try {
       const parsed = totpVerifySchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      if (!parsed.success) return badRequest(res, parsed.error);
 
       const user = await prisma.user.findUnique({ where: { id: req.user.id } });
       if (!user) return res.sendStatus(404);
@@ -828,7 +903,7 @@ async function startServer() {
   app.post('/api/api-keys', authenticateToken, async (req: any, res) => {
     try {
       const parsed = apiKeyCreateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      if (!parsed.success) return badRequest(res, parsed.error);
 
       const ws = await checkWorkspaceAccess(parsed.data.workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
@@ -900,7 +975,10 @@ async function startServer() {
 
   app.post('/api/admin/users/:id/block', authenticateToken, requireAdmin, async (req: any, res) => {
     try {
-      const { isBlocked } = req.body;
+      const parsed = adminBlockSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { isBlocked } = parsed.data;
+      if (isBlocked && req.params.id === req.user.id) return res.status(400).json({ error: 'You cannot block your own account.' });
       const user = await prisma.user.update({
         where: { id: req.params.id },
         data: { isBlocked }
@@ -914,7 +992,9 @@ async function startServer() {
 
   app.post('/api/admin/users/:id/subscription', authenticateToken, requireAdmin, async (req: any, res) => {
     try {
-      const { plan, expiresAt } = req.body;
+      const parsed = adminSubscriptionSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { plan, expiresAt } = parsed.data;
       const user = await prisma.user.update({
         where: { id: req.params.id },
         data: { 
@@ -931,7 +1011,9 @@ async function startServer() {
 
   app.post('/api/admin/users/:id/role', authenticateToken, requireAdmin, async (req: any, res) => {
     try {
-      const { role } = req.body;
+      const parsed = adminRoleSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { role } = parsed.data;
       // Prevent an admin from removing their own admin status accidentally
       if (req.user.id === req.params.id && role !== 'SYSTEM_ADMIN') {
         return res.status(400).json({ error: 'You cannot remove your own admin privileges.' });
@@ -976,34 +1058,11 @@ async function startServer() {
     }
   });
 
-  // Public Endpoints — only expose non-sensitive fields
-  app.get('/api/public/workspaces/:id', async (req, res) => {
-    try {
-      const workspace = await prisma.workspace.findUnique({
-        where: { id: req.params.id },
-        select: { id: true, name: true, createdAt: true }
-      });
-      if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
-      res.json(workspace);
-    } catch (error: any) {
-      serverError(res, error);
-    }
-  });
-
-  app.get('/api/public/workspaces/:id/monitors', async (req, res) => {
-    try {
-      const monitors = await prisma.monitor.findMany({
-        where: { workspaceId: req.params.id },
-        select: {
-          id: true, name: true, monitorType: true, url: true,
-          status: true, currentStatus: true, interval: true, lastChecked: true
-        }
-      });
-      res.json(monitors);
-    } catch (error: any) {
-      serverError(res, error);
-    }
-  });
+  // Eskiden burada kimlik dogrulamasiz /api/public/workspaces/:id ve
+  // /api/public/workspaces/:id/monitors uclari vardi. Ikincisi workspace'teki
+  // TUM monitorlerin url'ini (sube WAN IP'leri dahil) herkese donuyordu ve
+  // workspaceId public durum sayfasi yanitinda yer aldigi icin erisilebilirdi.
+  // Arayuz bu uclari kullanmiyordu; kaldirildi.
 
   // --- HELPERS ---
   const checkWorkspaceAccess = async (workspaceId: string, userId: string) => {
@@ -1014,6 +1073,11 @@ async function startServer() {
       }
     });
   };
+
+  // Bir grubun verilen workspace'e ait olup olmadigi. Onceden monitorler
+  // baska bir musterinin grubuna (ve onun lokasyon alarmina) baglanabiliyordu.
+  const groupInWorkspace = async (groupId: string, workspaceId: string) =>
+    !!(await prisma.monitorGroup.findFirst({ where: { id: groupId, workspaceId }, select: { id: true } }));
 
   // Returns the monitor only if the user has access to its workspace
   const checkMonitorAccess = async (monitorId: string, userId: string) => {
@@ -1027,13 +1091,16 @@ async function startServer() {
   // Anonymous connections are allowed (public status pages) but only receive
   // sanitized 'monitor-status' / 'monitor-deleted' events. Full monitor objects
   // and ping logs are emitted only to authenticated workspace rooms.
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
-    if (!token) return next();
-    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-      if (!err) socket.data.user = user;
-      next();
-    });
+    if (!token || typeof token !== 'string') return next();
+    try {
+      // Ayni oturum kurallari: ara jetonlar, engelli kullanicilar ve eski
+      // tokenVersion'li jetonlar workspace odalarina giremez.
+      const user = await verifySessionToken(token);
+      if (user) socket.data.user = user;
+    } catch { /* anonim baglanti olarak devam */ }
+    next();
   });
 
   // --- Durum sayfasi odalari ---
@@ -1073,9 +1140,13 @@ async function startServer() {
         const slug = typeof payload === 'string' ? payload : payload?.slug;
         const token = typeof payload === 'object' ? payload?.token : undefined;
         if (typeof slug !== 'string') return;
-        const page = await prisma.publicStatusPage.findUnique({ where: { slug }, select: { id: true, slug: true, passwordHash: true } });
+        const page = await prisma.publicStatusPage.findUnique({ where: { slug }, select: { id: true, slug: true, passwordHash: true, workspaceId: true } });
         if (!page) return;
-        if (page.passwordHash && !hasStatusPageAccess({ headers: { 'x-status-page-token': token } }, page.slug)) return;
+        if (page.passwordHash && !hasStatusPageAccess({ headers: { 'x-status-page-token': token } }, page)) {
+          // Workspace uyesi (sahip) sifresiz izleyebilir.
+          const member = socket.data.user && (await checkWorkspaceAccess(page.workspaceId, socket.data.user.id));
+          if (!member) return;
+        }
         await refreshMonitorPages(true);
         socket.join(`sp:${page.id}`);
       } catch { /* ignore */ }
@@ -1131,8 +1202,13 @@ async function startServer() {
       const workspaces = await prisma.workspace.findMany({ 
         where: { 
           OR: [{ userId: req.user.id }, { members: { some: { userId: req.user.id } } }]
-        } 
+        },
+        orderBy: { createdAt: 'asc' }
       });
+      // Arayuz ilk workspace'i acar. Sira belirsizken baska bir workspace'e uye
+      // olan kullanici her yenilemede farkli workspace gorebiliyordu: once
+      // kendi workspace'leri, sonra uye olduklari.
+      workspaces.sort((a: any, b: any) => Number(b.userId === req.user.id) - Number(a.userId === req.user.id));
       // SMTP parolasi istemciye gonderilmez. Onceden workspace satiri oldugu
       // gibi donuyordu; bu, parolayi sahibin yani sira her ADMIN uyenin
       // tarayicisina da acik metin olarak tasiyordu. Arayuz zaten alani
@@ -1146,20 +1222,40 @@ async function startServer() {
   app.put('/api/user', authenticateToken, async (req: any, res) => {
     try {
       const parsed = userUpdateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-      const { name, email, password } = parsed.data;
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { name, email, password, currentPassword } = parsed.data;
+      const current = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (!current) return res.sendStatus(404);
+
+      const emailChanging = !!email && email !== current.email.toLowerCase();
+      // E-posta ve parola hesabin anahtarlaridir: calinmis bir oturum jetonuyla
+      // kalici olarak ele gecirilmesinler diye mevcut parola istenir.
+      if ((emailChanging || password) && current.password) {
+        if (!currentPassword || !(await bcrypt.compare(currentPassword, current.password))) {
+          return res.status(400).json({ error: 'Current password is incorrect', code: 'current_password' });
+        }
+      }
+      if (emailChanging && (await findUserByEmail(email))) {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+
       const updateData: any = {};
       if (name) updateData.name = name;
-      if (email) updateData.email = email;
+      if (emailChanging) updateData.email = email;
       if (password) {
         updateData.password = await bcrypt.hash(password, 12);
+        // Diger cihazlardaki oturumlar kapanir; bu istemciye yeni jeton donulur.
+        updateData.tokenVersion = { increment: 1 };
       }
 
       const user = await prisma.user.update({
         where: { id: req.user.id },
         data: updateData
       });
-      res.json({ id: user.id, name: user.name, email: user.email });
+      if (emailChanging || password) {
+        await logAudit({ userId: user.id, action: 'auth.credentials.changed', ip: requestIp(req), metadata: { emailChanged: emailChanging, passwordChanged: !!password } });
+      }
+      res.json({ ...publicUser(user), ...(password ? { token: signSession(user) } : {}) });
     } catch (error: any) {
       if (error.code === 'P2002') return res.status(400).json({ error: 'Email already exists' });
       serverError(res, error);
@@ -1233,11 +1329,11 @@ async function startServer() {
       const ws = await prisma.workspace.findUnique({ where: { id: req.params.id } });
       if (!ws) return res.status(404).json({ error: 'Workspace not found' });
 
-      // Only OWNER can add members (or we can allow ADMINs too. Let's allow OWNER or ADMIN)
-      const hasAccess = await checkWorkspaceAccess(req.params.id, req.user.id);
-      if (!hasAccess) return res.status(403).json({ error: 'Forbidden' });
+      // Uye eklemek yalnizca SAHIBIN yetkisi. Onceden her ADMIN uye baska
+      // kullanicilari ekleyip cikarabiliyordu.
+      if (ws.userId !== req.user.id) return res.status(403).json({ error: 'Only the workspace owner can manage members' });
 
-      const userToAdd = await prisma.user.findUnique({ where: { email } });
+      const userToAdd = await findUserByEmail(email);
       if (!userToAdd) return res.status(404).json({ error: 'User not found' });
 
       if (userToAdd.id === ws.userId) return res.status(400).json({ error: 'User is already the owner' });
@@ -1273,6 +1369,10 @@ async function startServer() {
       if (!member || member.workspaceId !== req.params.id) {
         return res.status(404).json({ error: 'Member not found' });
       }
+      // Sahip herkesi cikarabilir; uye yalnizca kendini (ayrilma).
+      if (ws.userId !== req.user.id && member.userId !== req.user.id) {
+        return res.status(403).json({ error: 'Only the workspace owner can manage members' });
+      }
 
       await prisma.workspaceMember.delete({ where: { id: req.params.memberId } });
       await logAudit({ userId: req.user.id, workspaceId: req.params.id, action: 'workspace.member.remove', targetType: 'User', targetId: member.userId, ip: requestIp(req) });
@@ -1304,7 +1404,7 @@ async function startServer() {
   app.post('/api/monitor-groups', authenticateToken, async (req: any, res) => {
     try {
       const parsed = monitorGroupCreateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      if (!parsed.success) return badRequest(res, parsed.error);
       
       const ws = await checkWorkspaceAccess(parsed.data.workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
@@ -1363,7 +1463,7 @@ async function startServer() {
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
       
       const parsed = monitorGroupUpdateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      if (!parsed.success) return badRequest(res, parsed.error);
       
       const group = await prisma.monitorGroup.update({ where: { id: req.params.id }, data: parsed.data });
       res.json(group);
@@ -1408,11 +1508,15 @@ async function startServer() {
   app.post('/api/monitors', authenticateToken, async (req: any, res) => {
     try {
       const parsed = monitorCreateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      if (!parsed.success) return badRequest(res, parsed.error);
       
       const ws = await checkWorkspaceAccess(parsed.data.workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
       
+      if (parsed.data.groupId && !(await groupInWorkspace(parsed.data.groupId, parsed.data.workspaceId))) {
+        return res.status(400).json({ error: 'Group does not belong to this workspace' });
+      }
+
       const monitor = await prisma.monitor.create({ data: parsed.data });
       emitMonitorCreated(monitor);
       await logAudit({ userId: req.user.id, workspaceId: monitor.workspaceId, action: 'monitor.create', targetType: 'Monitor', targetId: monitor.id, ip: requestIp(req), metadata: { name: monitor.name, monitorType: monitor.monitorType } });
@@ -1421,6 +1525,31 @@ async function startServer() {
       serverError(res, error);
     }
   });
+
+  // Durum gecisleri: her monitor icin durumun degistigi satirlar (yeni olaylar
+  // ve toparlanmalar) + penceredeki ilk satir sorunluysa o. Uptime hesaplariyla
+  // ayni kural: degraded (2) "calisiyor" sayilir, yalnizca 0 kesintidir; olay
+  // listesinde ise degraded ayri tur olarak gosterilir.
+  const statusTransitions = async (scope: { workspaceId?: string; monitorId?: string }, days: number, limit: number) => {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const filter = scope.monitorId
+      ? Prisma.sql`p."monitorId" = ${scope.monitorId}`
+      : Prisma.sql`m."workspaceId" = ${scope.workspaceId}`;
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT * FROM (
+        SELECT p.id, p."monitorId", p.timestamp, p.status, p."responseTime", p."statusCode", p."errorMessage",
+               m.name AS "monitorName", m.url AS "monitorUrl",
+               LAG(p.status) OVER (PARTITION BY p."monitorId" ORDER BY p.timestamp) AS prev
+        FROM "PingLog" p JOIN "Monitor" m ON m.id = p."monitorId"
+        WHERE ${filter} AND p.timestamp >= ${since}
+      ) t
+      WHERE (prev IS NULL AND status <> 1) OR prev <> status
+      ORDER BY timestamp DESC
+      LIMIT ${limit}`;
+    return rows.map(({ monitorName, monitorUrl, prev: _prev, ...r }) => ({
+      ...r, monitor: { id: r.monitorId, name: monitorName, url: monitorUrl }
+    }));
+  };
 
   // Agir ama yavas degisen hesaplar icin onbellek:
   //  - ayni anahtara ayni anda gelen istekler TEK hesaplamayi bekler
@@ -1537,6 +1666,7 @@ async function startServer() {
       if (action === 'delete') {
         await prisma.monitor.deleteMany({ where: { id: { in: ownedIds } } });
         ownedIds.forEach((id: string) => emitMonitorDeleted(id));
+        await logAudit({ userId: req.user.id, action: 'monitor.bulk_delete', targetType: 'Monitor', ip: requestIp(req), metadata: { count: ownedIds.length, ids: ownedIds.slice(0, 50) } });
       } else {
         const newStatus = action === 'pause' ? 'paused' : 'up';
         await prisma.monitor.updateMany({ where: { id: { in: ownedIds } }, data: { status: newStatus } });
@@ -1572,7 +1702,16 @@ async function startServer() {
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
       
       const parsed = monitorUpdateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      if (!parsed.success) return badRequest(res, parsed.error);
+      // Kismi PUT genelde monitorType icermez; hedef dogrulamasi mevcut kayitla
+      // birlestirilmis hal uzerinde yapilir (onceden atlaniyordu).
+      if (parsed.data.url !== undefined || parsed.data.monitorType !== undefined) {
+        const targetError = monitorTargetError({ ...existing, ...parsed.data });
+        if (targetError) return res.status(400).json({ error: `url: ${targetError}` });
+      }
+      if (parsed.data.groupId && !(await groupInWorkspace(parsed.data.groupId, existing.workspaceId))) {
+        return res.status(400).json({ error: 'Group does not belong to this workspace' });
+      }
       const monitor = await prisma.monitor.update({ where: { id: req.params.id }, data: parsed.data });
       emitMonitorUpdated(monitor);
       // customHeaders kullanicinin yazdigi ham JSON'dur ve siklikla
@@ -1612,15 +1751,27 @@ async function startServer() {
       const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
-      const logs = await prisma.pingLog.findMany({
-        where: { monitor: { workspaceId } },
-        orderBy: { timestamp: 'desc' },
-        take: 300,
-        // Sayfa yalnizca id/ad/adres kullaniyor; 300 satirin her birine tum
-        // monitor kaydini (webhook'lar dahil) eklemek gereksiz yuk ve sizinti.
-        include: { monitor: { select: { id: true, name: true, url: true } } }
-      });
+      // Onceden workspace'in son 300 log'u donuyordu: 63 monitorde bu ~16
+      // dakika, 600 monitorde ~30 saniye ediyordu; haftalardir suren bir kesinti
+      // "12 dakika once basladi" gorunuyordu. Artik son 7 gunun yalnizca DURUM
+      // GECISLERI doner (bkz. statusTransitions); sayfa ayni algoritmayla olaylari
+      // kurar. Agir bir sorgu oldugu icin 60 sn onbelleklenir.
+      const logs = await cachedSWR(`alerts:${workspaceId}`, 60_000, 5 * 60_000,
+        () => statusTransitions({ workspaceId }, 7, 1000));
       res.json(logs);
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
+  // Tek monitorun son 30 gunluk durum gecisleri (detay sayfasindaki olaylar).
+  // Onceden olaylar son 50 log'dan hesaplaniyordu: surekli down olan monitorde
+  // "olay saptanmadi" yaziyordu.
+  app.get('/api/monitors/:id/incidents', authenticateToken, async (req: any, res) => {
+    try {
+      const monitor = await checkMonitorAccess(req.params.id, req.user.id);
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+      res.json(await statusTransitions({ monitorId: monitor.id }, 30, 500));
     } catch (error: any) {
       serverError(res, error);
     }
@@ -1661,11 +1812,11 @@ async function startServer() {
       const [row] = await prisma.$queryRaw<any[]>`
         SELECT
           count(*) FILTER (WHERE timestamp >= ${since(1)})::integer AS t1,
-          count(*) FILTER (WHERE timestamp >= ${since(1)} AND status = 1)::integer AS u1,
+          count(*) FILTER (WHERE timestamp >= ${since(1)} AND status <> 0)::integer AS u1,
           count(*) FILTER (WHERE timestamp >= ${since(7)})::integer AS t7,
-          count(*) FILTER (WHERE timestamp >= ${since(7)} AND status = 1)::integer AS u7,
+          count(*) FILTER (WHERE timestamp >= ${since(7)} AND status <> 0)::integer AS u7,
           count(*)::integer AS t30,
-          count(*) FILTER (WHERE status = 1)::integer AS u30
+          count(*) FILTER (WHERE status <> 0)::integer AS u30
         FROM "PingLog"
         WHERE "monitorId" = ${monitorId} AND timestamp >= ${since(30)}`;
       const pct = (t: number, u: number) => parseFloat((t > 0 ? (u / t) * 100 : 100).toFixed(2));
@@ -1700,7 +1851,9 @@ async function startServer() {
     try {
       const monitor = await prisma.monitor.findUnique({ where: { id: req.params.id }, include: { workspace: true, group: true } });
       if (!monitor || monitor.monitorType !== 'HEARTBEAT') return res.status(404).json({ error: 'Not found' });
-      
+      // Duraklatilmis monitorde sinyal kaydedilmez ve bildirim uretilmez.
+      if (monitor.status === 'paused') return res.json({ success: true, message: 'Monitor is paused; heartbeat ignored' });
+
       const logEntry = await prisma.pingLog.create({ data: { monitorId: monitor.id, status: 1, responseTime: 0, statusCode: 200 } });
       const updated = await prisma.monitor.update({ where: { id: monitor.id }, data: { lastChecked: new Date(), currentStatus: 'up', incidentActive: false, consecutiveFailures: 0 } });
       
@@ -1732,7 +1885,7 @@ async function startServer() {
   app.post('/api/maintenance-windows', authenticateToken, async (req: any, res) => {
     try {
       const parsed = maintenanceWindowCreateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+      if (!parsed.success) return badRequest(res, parsed.error);
       const { monitorId, startTime, endTime } = parsed.data;
 
       const monitor = await checkMonitorAccess(monitorId, req.user.id);
@@ -1791,8 +1944,8 @@ async function startServer() {
   app.post('/api/status-pages', authenticateToken, async (req: any, res) => {
     try {
       const parsed = statusPageCreateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-      const { workspaceId, title, description, slug, monitorIds, groupIds, showGroupMembers, password } = parsed.data;
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { workspaceId, title, description, slug, monitorIds, groupIds, showGroupMembers, password, themeColor } = parsed.data;
 
       const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
@@ -1806,6 +1959,7 @@ async function startServer() {
       const page = await prisma.publicStatusPage.create({
         data: {
           workspaceId, title, description, slug,
+          ...(themeColor ? { themeColor } : {}),
           ...(showGroupMembers === undefined ? {} : { showGroupMembers }),
           ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}),
           monitors: { connect: monitorIds.map((id: string) => ({ id })) },
@@ -1813,6 +1967,7 @@ async function startServer() {
         },
         include: { monitors: true, groups: true }
       });
+      refreshMonitorPages(true).catch(() => {});
       await logAudit({ userId: req.user.id, workspaceId, action: 'statuspage.create', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: { slug } });
       res.json(safeStatusPage(page));
     } catch (e: any) {
@@ -1829,8 +1984,8 @@ async function startServer() {
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
       const parsed = statusPageUpdateSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-      const { title, description, slug, monitorIds, groupIds, showGroupMembers, password } = parsed.data;
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { title, description, slug, monitorIds, groupIds, showGroupMembers, password, themeColor } = parsed.data;
       if (monitorIds && !(await verifyMonitorsInWorkspace(monitorIds, existing.workspaceId))) {
         return res.status(400).json({ error: 'One or more monitors do not belong to this workspace' });
       }
@@ -1842,6 +1997,7 @@ async function startServer() {
         where: { id: req.params.id },
         data: {
           title, description, slug,
+          ...(themeColor ? { themeColor } : {}),
           ...(showGroupMembers === undefined ? {} : { showGroupMembers }),
           // password gonderilmediyse mevcut sifreye dokunulmaz; bos string
           // gonderildiyse koruma kaldirilir.
@@ -1854,6 +2010,7 @@ async function startServer() {
       // parsed.data'yi oldugu gibi loglamak sifreyi ACIK METIN olarak audit
       // kaydina yazardi; kalici bir tabloda duran son yer orasi olmali.
       const { password: _pw, ...auditable } = parsed.data as any;
+      refreshMonitorPages(true).catch(() => {});
       await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'statuspage.update', targetType: 'PublicStatusPage', targetId: page.id, ip: requestIp(req), metadata: { ...auditable, passwordChanged: password !== undefined } });
       res.json(safeStatusPage(page));
     } catch (e: any) {
@@ -1900,7 +2057,7 @@ async function startServer() {
       }
 
       const token = jwt.sign(
-        { slug: page.slug, purpose: STATUS_PAGE_TOKEN_PURPOSE },
+        { slug: page.slug, purpose: STATUS_PAGE_TOKEN_PURPOSE, pv: passwordVersion(page.passwordHash) },
         JWT_SECRET,
         { expiresIn: '12h' }
       );
@@ -1908,7 +2065,12 @@ async function startServer() {
     } catch (e: any) { serverError(res, e); }
   });
 
-  const hasStatusPageAccess = (req: any, slug: string) => {
+  // Sifrenin parmak izi: sifre degisince/kaldirilinca eski erisim jetonlari
+  // gecersiz olur (onceden 12 saat gecerli kaliyordu). Ozetin ozeti tasinir,
+  // bcrypt ozetinin kendisi JWT'de (okunabilir) yer almaz.
+  const passwordVersion = (hash: string | null) => (hash ? createHash('sha256').update(hash).digest('hex').slice(0, 16) : null);
+
+  const hasStatusPageAccess = (req: any, page: { slug: string; passwordHash: string | null }) => {
     // Kendi basligini kullaniyor: oturum jetonuyla ayni yerde tasinirsa
     // ikisinden biri digerini eziyor. Sorgu parametresi bilerek desteklenmiyor
     // — jeton URL'de tasinirsa nginx erisim loglarina ve referrer basligina
@@ -1919,8 +2081,17 @@ async function startServer() {
     if (!raw || typeof raw !== 'string') return false;
     try {
       const payload: any = jwt.verify(raw, JWT_SECRET);
-      return payload.purpose === STATUS_PAGE_TOKEN_PURPOSE && payload.slug === slug;
+      return payload.purpose === STATUS_PAGE_TOKEN_PURPOSE && payload.slug === page.slug && payload.pv === passwordVersion(page.passwordHash);
     } catch { return false; }
+  };
+
+  // Giris yapmis workspace uyesi kendi sifreli sayfasini sifresiz onizleyebilir.
+  const isPageMember = async (req: any, workspaceId: string) => {
+    const header = req.headers['authorization'];
+    const raw = header && typeof header === 'string' ? header.split(' ')[1] : null;
+    if (!raw) return false;
+    const user = await verifySessionToken(raw).catch(() => null);
+    return !!(user && (await checkWorkspaceAccess(workspaceId, user.id)));
   };
 
   app.get('/api/public-status/:slug', async (req, res) => {
@@ -1945,7 +2116,7 @@ async function startServer() {
       // Sifre korumali sayfada, gecerli bir erisim jetonu yoksa ICERIK HIC
       // uretilmez: yalnizca basligi ve korumali oldugu bilgisi doner. Monitor
       // adlari, durumlar ve gecmis hicbir sekilde sizmaz.
-      if (page.passwordHash && !hasStatusPageAccess(req, page.slug)) {
+      if (page.passwordHash && !hasStatusPageAccess(req, page) && !(await isPageMember(req, page.workspaceId))) {
         return res.status(401).json({ protected: true, title: page.title, themeColor: page.themeColor, logoUrl: page.logoUrl });
       }
 
@@ -1979,7 +2150,7 @@ async function startServer() {
         // toplamak hem yavas (~1,5 sn) hem de art arda cagrilarak sunucuyu
         // yormanin kolay bir yoluydu. Gecmis sayfa basina onbelleklenir; anlik
         // durumlar (currentStatus) yukaridaki hafif sorgudan her istekte taze gelir.
-        const results = await cachedSWR<any[]>(`ps:${page.id}:${allIds.length}`, 60_000, 15 * 60_000, () => prisma.$queryRaw<any[]>`
+        const results = await cachedSWR<any[]>(`ps:${page.id}:${createHash('sha1').update(allIds.slice().sort().join(',')).digest('hex')}`, 60_000, 15 * 60_000, () => prisma.$queryRaw<any[]>`
           SELECT 
             "monitorId",
             date_trunc('day', timestamp) AS day,
@@ -2009,7 +2180,7 @@ async function startServer() {
         const valid = history.filter(h => h.uptime > -1);
         return valid.length > 0
           ? parseFloat((valid.reduce((acc, curr) => acc + curr.uptime, 0) / valid.length).toFixed(2))
-          : 100;
+          : null; // veri yok: %100 gostermek yanilticiydi
       };
 
       // --- tek tek secilmis monitorler ---
@@ -2070,7 +2241,9 @@ async function startServer() {
       });
 
       // passwordHash istemciye asla gitmez.
-      const { passwordHash: _ph, ...publicPage } = page as any;
+      // passwordHash ve workspaceId istemciye gitmez (workspaceId eskiden
+      // monitor adreslerini donen public uca anahtar oluyordu).
+      const { passwordHash: _ph, workspaceId: _ws, ...publicPage } = page as any;
       res.json({ ...publicPage, groups: groupSummaries });
     } catch (e: any) { 
       serverError(res, e);
@@ -2093,27 +2266,27 @@ async function startServer() {
     // Telegram
     const botToken = workspace?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN;
     if (monitor.telegramChatId && botToken) {
-      dispatchers.push(axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, { chat_id: monitor.telegramChatId, text: message }).then(() => log(`DEBUG: Telegram sent for ${monitor.name}`)).catch((e: any) => log(`DEBUG: Telegram failed: ${e.message}`)));
+      dispatchers.push(axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, { chat_id: monitor.telegramChatId, text: message }, { timeout: 10000 }).then(() => log(`DEBUG: Telegram sent for ${monitor.name}`)).catch((e: any) => log(`DEBUG: Telegram failed: ${e.message}`)));
     }
     // Slack
     if (monitor.slackWebhook) {
-      dispatchers.push(axios.post(monitor.slackWebhook, { text: message }).catch((e: any) => log(`DEBUG: Slack failed: ${e.message}`)));
+      dispatchers.push(postWebhook(monitor.slackWebhook, { text: message }).catch((e: any) => log(`DEBUG: Slack failed: ${e.message}`)));
     }
     // Zoom
     if (monitor.zoomWebhook) {
-      dispatchers.push(axios.post(monitor.zoomWebhook, { is_markdown_support: true, content: { head: { text: statusText }, body: [{ type: 'message', text: message }] } }).catch((e: any) => log(`DEBUG: Zoom failed: ${e.message}`)));
+      dispatchers.push(postWebhook(monitor.zoomWebhook, { is_markdown_support: true, content: { head: { text: statusText }, body: [{ type: 'message', text: message }] } }).catch((e: any) => log(`DEBUG: Zoom failed: ${e.message}`)));
     }
     // Discord
     if (monitor.discordWebhook) {
-      dispatchers.push(axios.post(monitor.discordWebhook, { content: message }).catch((e: any) => log(`DEBUG: Discord failed: ${e.message}`)));
+      dispatchers.push(postWebhook(monitor.discordWebhook, { content: message }).catch((e: any) => log(`DEBUG: Discord failed: ${e.message}`)));
     }
     // Microsoft Teams
     if (monitor.teamsWebhook) {
-      dispatchers.push(axios.post(monitor.teamsWebhook, { text: message }).catch((e: any) => log(`DEBUG: Teams failed: ${e.message}`)));
+      dispatchers.push(postWebhook(monitor.teamsWebhook, { text: message }).catch((e: any) => log(`DEBUG: Teams failed: ${e.message}`)));
     }
     // Generic Webhook
     if (monitor.genericWebhook) {
-      dispatchers.push(axios.post(monitor.genericWebhook, { monitor: monitor.name, url: monitor.url, status: type, reason, timestamp: new Date().toISOString() }).catch((e: any) => log(`DEBUG: Generic webhook failed: ${e.message}`)));
+      dispatchers.push(postWebhook(monitor.genericWebhook, { monitor: monitor.name, url: monitor.url, status: type, reason, timestamp: new Date().toISOString() }).catch((e: any) => log(`DEBUG: Generic webhook failed: ${e.message}`)));
     }
     // Email
     if (monitor.alertEmail && workspace?.smtpHost && workspace?.smtpUser && workspace?.smtpPass) {
@@ -2232,6 +2405,10 @@ async function startServer() {
   }
 
   // --- PINGER ENGINE ---
+  // SSL bitis uyarisinin son gonderim zamani (monitorId -> ms). Bellekte tutulur;
+  // yeniden baslatmada en fazla bir ek uyari gider.
+  const sslAlertSentAt = new Map<string, number>();
+
   async function pingOneMonitor(monitor: any, inMaintenance?: boolean) {
     let status = 1;
     let responseTime = 0;
@@ -2267,8 +2444,22 @@ async function startServer() {
       return; // Handled by separate cron loop
     }
 
-    // DNS check
-    try {
+    // SSRF guard: refuse to probe targets that resolve to private/internal
+    // addresses. Bu kontrol SSL/DNS kontrollerinden ONCE yapilir: onceden SSL
+    // kontrolu ic adreslere TLS baglantisi kurup ic sertifikanin bilgilerini
+    // arayuzde gosteriyordu. Baglanti anindaki asil koruma guardedLookup'ta.
+    let blocked = false;
+    if (!ALLOW_PRIVATE_TARGETS && monitor.url) {
+      const targetIp = await resolveTargetIp(monitor.url);
+      if (targetIp && isPrivateIp(targetIp)) {
+        status = 0;
+        errorMessage = 'Blocked: target resolves to a private/internal address (set ALLOW_PRIVATE_TARGETS=true to allow)';
+        blocked = true;
+      }
+    }
+
+    // DNS check (yalnizca URL'li HTTP monitorleri; TCP/PING ciplak host kullanir)
+    if (monitor.monitorType === 'HTTP' && !blocked) try {
       const dnsResult = await checkDNS(monitor.url);
       dnsUpdateData.dnsResolutionTime = dnsResult.resolutionTime;
       if (dnsResult.resolvedIp) {
@@ -2280,34 +2471,31 @@ async function startServer() {
       }
     } catch { /* ignore dns errors */ }
 
-    // SSL check (every 6 hours)
+    // SSL check (every 6 hours) — yalnizca https adresli HTTP monitorleri.
+    // Onceden duz http:// ve TCP/PING monitorlerinde de calisip "gecersiz
+    // sertifika" (kirmizi ERR rozeti) uretiyordu.
     const sslCheckDue = !monitor.sslLastChecked || (Date.now() - new Date(monitor.sslLastChecked).getTime() > 6 * 60 * 60 * 1000);
-    if (monitor.sslCheckEnabled && sslCheckDue) {
+    const isHttps = monitor.monitorType === 'HTTP' && typeof monitor.url === 'string' && monitor.url.toLowerCase().startsWith('https://');
+    if (monitor.sslCheckEnabled && isHttps && !blocked && sslCheckDue) {
       try {
-        const ssl = await checkSSL(monitor.url);
+        const ssl = await checkSSL(monitor.url, targetLookup());
         sslUpdateData.sslValid = ssl.valid;
         sslUpdateData.sslExpiry = ssl.expiry;
         sslUpdateData.sslIssuer = ssl.issuer;
         sslUpdateData.sslSubject = ssl.subject;
         sslUpdateData.sslDaysLeft = ssl.daysLeft;
         sslUpdateData.sslLastChecked = new Date();
-        // SSL expiry alerts
+        // SSL expiry alerts — gunde en fazla bir kez. Onceden her 6 saatlik
+        // kontrolde ayni uyari tekrar gidiyordu.
         if (ssl.daysLeft !== null && ssl.daysLeft <= 7) {
-          await dispatchNotification(monitor, monitor.workspace, 'ssl_expiry', `Certificate expires in ${ssl.daysLeft} day(s)`);
+          const last = sslAlertSentAt.get(monitor.id) || 0;
+          if (Date.now() - last > 24 * 60 * 60 * 1000) {
+            sslAlertSentAt.set(monitor.id, Date.now());
+            await dispatchNotification(monitor, monitor.workspace, 'ssl_expiry', `Certificate expires in ${ssl.daysLeft} day(s)`);
+          }
         }
         log(`DEBUG: SSL check for ${monitor.name}: valid=${ssl.valid}, daysLeft=${ssl.daysLeft}`);
       } catch { /* ignore ssl errors */ }
-    }
-
-    // SSRF guard: refuse to probe targets that resolve to private/internal addresses
-    let blocked = false;
-    if (!ALLOW_PRIVATE_TARGETS && monitor.url) {
-      const targetIp = await resolveTargetIp(monitor.url);
-      if (targetIp && isPrivateIp(targetIp)) {
-        status = 0;
-        errorMessage = 'Blocked: target resolves to a private/internal address (set ALLOW_PRIVATE_TARGETS=true to allow)';
-        blocked = true;
-      }
     }
 
     // HTTP or TCP ping
@@ -2315,7 +2503,7 @@ async function startServer() {
     if (!blocked) try {
       if (monitor.monitorType === 'TCP') {
         if (!monitor.url || !monitor.port) throw new Error('Host and port required for TCP check');
-        const tcpResult = await checkTCP(monitor.url, monitor.port);
+        const tcpResult = await checkTCP(monitor.url, monitor.port, 10000, targetLookup());
         responseTime = tcpResult.responseTime;
         statusCode = 0;
       } else if (monitor.monitorType === 'PING') {
@@ -2330,16 +2518,24 @@ async function startServer() {
         }
       } else {
         // HTTP
-        const httpMethod = (monitor.method || 'GET').toLowerCase();
+        const httpMethod = (monitor.method || 'GET').toUpperCase();
         let headers: any = { 'User-Agent': 'Eyeon.site/2.0' };
         if (monitor.customHeaders) {
           try { headers = { ...headers, ...JSON.parse(monitor.customHeaders) }; } catch (e) {}
         }
         
-        const res = await (axios as any)[httpMethod](monitor.url, {
+        // axios.request: onceden axios[method](url, config) cagriliyordu. post/put
+        // icin ikinci parametre istek GOVDESIDIR — timeout uygulanmiyor (sonsuz
+        // bekleme, pinger slotunu kilitler), ozel basliklar govdeye gidiyordu.
+        const res = await axios.request({
+          method: httpMethod,
+          url: monitor.url,
           timeout: 10000,
           headers,
-          validateStatus: () => true
+          maxContentLength: 5 * 1024 * 1024,
+          validateStatus: () => true,
+          ...outboundAgents(),
+          ...redirectGuard()
         });
         responseTime = Date.now() - start;
         statusCode = res.status;
@@ -2373,10 +2569,17 @@ async function startServer() {
           if ((alertType === 'down' || monitor.notifyOnDegraded) && !memberAlertsSuppressed(monitor)) {
             await dispatchNotification(monitor, monitor.workspace, alertType as any, errorMessage);
           }
-        } else if (newIncidentActive && newCurrentStatus !== 'down') { newCurrentStatus = alertType; }
+        } else if (newIncidentActive) {
+          // Down'dan sonra yanit veren ama yavas servis artik "degraded".
+          // Onceden "down" olarak kaliyordu.
+          newCurrentStatus = alertType;
+        }
       } else { if (!newIncidentActive) newCurrentStatus = 'up'; }
     } else {
-      if (newIncidentActive && !memberAlertsSuppressed(monitor)) await dispatchNotification(monitor, monitor.workspace, 'up');
+      // Toparlanma bildirimi yalnizca daha once bildirim gitmis olaylar icin:
+      // notifyOnDegraded kapaliyken degraded'dan donus "RECOVERED" atmasin.
+      const wasNotified = monitor.currentStatus === 'down' || (monitor.currentStatus === 'degraded' && monitor.notifyOnDegraded);
+      if (newIncidentActive && wasNotified && !memberAlertsSuppressed(monitor)) await dispatchNotification(monitor, monitor.workspace, 'up');
       newIncidentActive = false; newConsecutiveFailures = 0; newCurrentStatus = 'up';
     }
 
@@ -2402,6 +2605,9 @@ async function startServer() {
   const inFlight = new Set<string>();
   const pingQueue: string[] = [];
   let lastHousekeeping = 0;
+  // En guncel aktif bakim listesi; tamamlanan bir kontrolun ardindan kuyrugu
+  // besleyen cagri eski turun listesini kullanmasin.
+  let latestMaintenanceIds = new Set<string>();
 
   async function pumpQueue(maintenanceIds: Set<string>) {
     while (inFlight.size < PINGER_CONCURRENCY && pingQueue.length > 0) {
@@ -2421,19 +2627,33 @@ async function startServer() {
       for (const m of monitors) {
         pingOneMonitor(m, maintenanceIds.has(m.id))
           .catch((e: any) => log(`DEBUG: pingOneMonitor error for ${m.name}: ${e.message}`))
-          .finally(() => { inFlight.delete(m.id); pumpQueue(maintenanceIds).catch(() => {}); });
+          .finally(() => { inFlight.delete(m.id); pumpQueue(latestMaintenanceIds).catch(() => {}); });
       }
     }
   }
 
   async function runHousekeeping(now: number) {
     // Heartbeat timeout check
-    const hbMonitors = await prisma.monitor.findMany({
-      where: { status: { not: 'paused' }, monitorType: 'HEARTBEAT' }, include: { workspace: true, group: true }
-    });
+    const nowDate = new Date(now);
+    const [hbMonitors, hbMaint] = await Promise.all([
+      prisma.monitor.findMany({
+        where: { status: { not: 'paused' }, monitorType: 'HEARTBEAT' }, include: { workspace: true, group: true }
+      }),
+      prisma.maintenanceWindow.findMany({
+        where: { active: true, startTime: { lte: nowDate }, endTime: { gte: nowDate }, monitor: { monitorType: 'HEARTBEAT' } },
+        select: { monitorId: true }
+      })
+    ]);
+    const hbInMaintenance = new Set(hbMaint.map((w: any) => w.monitorId));
     for (const hb of hbMonitors) {
-      const limitMs = (hb.interval + (hb.heartbeatGrace || 5) * 60) * 1000;
-      if (hb.lastChecked && now - hb.lastChecked.getTime() > limitMs && hb.currentStatus !== 'down') {
+      // Bakim penceresinde "missed" alarmi uretilmez.
+      if (hbInMaintenance.has(hb.id)) continue;
+      const limitMs = (hb.interval + (hb.heartbeatGrace ?? 5) * 60) * 1000;
+      // Hic sinyal gondermemis monitor, olusturulma aniyla olculur. Onceden
+      // lastChecked bos oldugu icin kontrol atlaniyor ve monitor sonsuza kadar
+      // "up" kaliyordu.
+      const lastSeen = (hb.lastChecked || hb.createdAt).getTime();
+      if (now - lastSeen > limitMs && hb.currentStatus !== 'down') {
          const logEntry = await prisma.pingLog.create({ data: { monitorId: hb.id, status: 0, responseTime: 0, errorMessage: 'Heartbeat missed', statusCode: 0 } });
          if (!memberAlertsSuppressed(hb)) await dispatchNotification(hb, hb.workspace, 'down', 'Heartbeat missed');
          const updated = await prisma.monitor.update({ where: { id: hb.id }, data: { currentStatus: 'down', incidentActive: true, consecutiveFailures: hb.consecutiveFailures + 1 } });
@@ -2464,6 +2684,7 @@ async function startServer() {
           })
         ]);
         const maintenanceIds = new Set<string>(maint.map((w: any) => w.monitorId));
+        latestMaintenanceIds = maintenanceIds;
         const queued = new Set(pingQueue);
         const due = candidates
           .filter((m: any) => !inFlight.has(m.id) && !queued.has(m.id) && now - (m.lastChecked?.getTime() || 0) >= (m.interval || 60) * 1000)

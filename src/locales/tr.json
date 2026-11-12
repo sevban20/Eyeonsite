@@ -14,7 +14,9 @@
     "back": "Geri",
     "never": "Hiç",
     "processing": "İşleniyor...",
-    "initializing": "Sistem Başlatılıyor"
+    "initializing": "Sistem Başlatılıyor",
+    "copied": "Kopyalandı",
+    "copy": "Kopyala"
   },
   "nav": {
     "dashboard": "Kontrol Paneli",
@@ -22,7 +24,9 @@
     "settings": "Ayarlar",
     "status_pages": "Durum Sayfaları",
     "sign_out": "Çıkış Yap",
-    "plan": "Plan"
+    "plan": "Plan",
+    "admin": "Yönetim",
+    "menu": "Menü"
   },
   "landing": {
     "badge": "Kesintisiz İzlemenin Geleceği",
@@ -175,7 +179,51 @@
     "composite_degraded_desc": "Bir veya birkaç devre düştü, lokasyon hâlâ ayakta. Genelde mesai içi takip yeterlidir.",
     "composite_down_title": "Tam kesinti kanalları",
     "composite_down_desc": "Tüm devreler düştü, lokasyon tamamen erişilemez durumda. Acil müdahale kanalları buraya.",
-    "composite_saved": "Lokasyon alarm ayarları kaydedildi"
+    "composite_saved": "Lokasyon alarm ayarları kaydedildi",
+    "collapse_group": "Grubu daralt",
+    "expand_group": "Grubu genişlet",
+    "color": "Renk",
+    "composite_status_up": "Çalışıyor",
+    "composite_status_degraded": "Kısmi kesinti",
+    "composite_status_down": "Tam kesinti",
+    "confirm_delete_group": "Bu grup silinsin mi? İçindeki monitörler silinmez, gruptan çıkarılır.",
+    "confirm_delete_monitor": "Bu monitör silinsin mi? Geçmiş kayıtları da silinir.",
+    "delete_group": "Grubu sil",
+    "delete_selected": "Seçilenleri sil",
+    "empty_state": "Henüz monitörün yok. İzlemeye başlamak için ilkini ekle.",
+    "group": "Grup",
+    "group_name": "Grup adı",
+    "group_name_placeholder": "örn. Üretim Servisleri",
+    "maintenance": "Bakımda",
+    "move_to": "Taşı",
+    "name_placeholder": "örn. Üretim API",
+    "never": "Hiç",
+    "new_group": "Yeni Grup",
+    "no_group": "Yok (grupsuz)",
+    "no_search_results": "Aramanla eşleşen monitör yok.",
+    "results": "{count} sonuç",
+    "ssl_certificate": "SSL sertifikası",
+    "toast_bulk_delete": "{count} monitör silindi",
+    "toast_bulk_pause": "{count} monitör duraklatıldı",
+    "toast_bulk_resume": "{count} monitör sürdürüldü",
+    "toast_bulk_failed": "Toplu işlem başarısız oldu",
+    "toast_group_created": "Grup oluşturuldu",
+    "toast_group_create_failed": "Grup oluşturulamadı",
+    "toast_group_deleted": "Grup silindi",
+    "toast_group_delete_failed": "Grup silinemedi",
+    "toast_group_renamed": "Grup adı değiştirildi",
+    "toast_group_update_failed": "Grup güncellenemedi",
+    "toast_monitor_created": "Monitör oluşturuldu",
+    "toast_monitor_create_failed": "Monitör oluşturulamadı",
+    "toast_monitor_deleted": "Monitör silindi",
+    "toast_monitor_delete_failed": "Monitör silinemedi",
+    "toast_monitor_moved": "Monitör taşındı",
+    "toast_monitors_moved": "{count} monitör taşındı",
+    "toast_move_failed": "Monitör taşınamadı",
+    "toast_paused": "Monitör duraklatıldı",
+    "toast_resumed": "Monitör sürdürüldü",
+    "toast_status_failed": "Monitör durumu güncellenemedi",
+    "ungrouped": "Grupsuz"
   },
   "alerts": {
     "feed_label": "Genel Uyarı Akışı",
@@ -191,7 +239,8 @@
     "active_outage": "Aktif Kesinti",
     "active_degraded": "Performans Sorunu",
     "downtime": "Kesinti Süresi",
-    "loading": "Uyarı Verileri Yükleniyor..."
+    "loading": "Uyarı Verileri Yükleniyor...",
+    "performance_degraded": "Performans düşüşü"
   },
   "settings": {
     "label": "Çalışma Alanı Ayarları",
@@ -268,7 +317,14 @@
     "apikeys_last_used": "Son kullanım",
     "apikeys_never_used": "Hiç kullanılmadı",
     "apikeys_created_toast": "API anahtarı oluşturuldu",
-    "apikeys_deleted_toast": "API anahtarı iptal edildi"
+    "apikeys_deleted_toast": "API anahtarı iptal edildi",
+    "apikeys_delete_confirm": "Bu API anahtarı iptal edilsin mi? Onu kullanan script'ler çalışmayı bırakır.",
+    "current_password": "Mevcut şifre",
+    "current_password_hint": "E-posta veya şifre değiştirmek için gerekli.",
+    "password_hint": "Yalnızca yeni bir şifre belirlemek istiyorsan doldur.",
+    "profile_saved": "Profil güncellendi",
+    "team_remove_confirm": "Bu üye çalışma alanından çıkarılsın mı?",
+    "workspace_saved": "Çalışma alanı güncellendi"
   },
   "monitor": {
     "back": "Panele Dön",
@@ -407,7 +463,26 @@
     "heartbeat_grace": "Tolerans Süresi (dakika)",
     "heartbeat_grace_desc": "Beklenen heartbeat gelmediğinde alarm üretilmeden önce bu kadar beklenir.",
     "accepted_status_codes": "Kabul Edilen Durum Kodları (İsteğe Bağlı)",
-    "accepted_status_codes_desc": "Boş bırakılırsa 400'ün altındaki her kod başarılı sayılır. Sağlık kontrolü ucu olmayan ve kökünde 404 dönen servisler için \"200-299,404\" yazabilirsin. Tek kod ya da aralık, virgülle ayrılır."
+    "accepted_status_codes_desc": "Boş bırakılırsa 400'ün altındaki her kod başarılı sayılır. Sağlık kontrolü ucu olmayan ve kökünde 404 dönen servisler için \"200-299,404\" yazabilirsin. Tek kod ya da aralık, virgülle ayrılır.",
+    "7_days_ago": "7 gün önce",
+    "confirm_delete_maintenance": "Bu bakım penceresi silinsin mi?",
+    "created": "Oluşturulma",
+    "error": "Hata",
+    "event_degraded": "Yavaş yanıt",
+    "event_operational": "Servis çalışıyor",
+    "event_outage": "Kesinti saptandı",
+    "heartbeat_url": "Heartbeat URL'si",
+    "heartbeat_url_desc": "Cron job'ın veya script'in her başarılı çalışmada bu adresi (GET) çağırsın. Aralık + tolerans süresi içinde çağrı gelmezse alarm gönderilir.",
+    "incident_outage": "Kesinti",
+    "incident_recovery": "Toparlandı",
+    "toast_invalid_number": "Tüm sayı alanlarını doldur",
+    "toast_maintenance_added": "Bakım penceresi eklendi",
+    "toast_maintenance_add_failed": "Bakım penceresi eklenemedi",
+    "toast_maintenance_deleted": "Bakım penceresi silindi",
+    "toast_maintenance_delete_failed": "Bakım penceresi silinemedi",
+    "toast_maintenance_range": "Bitiş zamanı başlangıçtan sonra olmalı",
+    "toast_settings_saved": "Ayarlar kaydedildi",
+    "toast_settings_failed": "Ayarlar kaydedilemedi"
   },
   "status_page": {
     "powered_by": "Altyapı",
@@ -428,7 +503,10 @@
     "password_placeholder": "Şifre",
     "unlock": "Giriş",
     "wrong_password": "Şifre hatalı.",
-    "unlock_failed": "Giriş yapılamadı, tekrar dene."
+    "unlock_failed": "Giriş yapılamadı, tekrar dene.",
+    "not_found_title": "Durum sayfası bulunamadı",
+    "not_found_desc": "Adresi kontrol et ya da sayfa sahibinden doğru linki iste.",
+    "partial_issues": "Bazı sistemlerde sorun var"
   },
   "status_pages": {
     "public_access": "Halka Açık Erişim",
@@ -463,7 +541,17 @@
     "password_keep": "Değiştirmemek için boş bırak",
     "password_placeholder": "En az 8 karakter",
     "password_desc": "Şifre tanımlarsan sayfa yalnızca şifreyi bilenlere açılır; şifre girilene kadar sunucu hiçbir servis adı veya durum bilgisi göndermez.",
-    "password_remove": "Şifre korumasını kaldır"
+    "password_remove": "Şifre korumasını kaldır",
+    "confirm_delete": "Bu durum sayfası silinsin mi?",
+    "description_placeholder": "Tüm sistemler çalışıyor.",
+    "locations_count": "{count} lokasyon",
+    "password_protected": "Şifreli",
+    "toast_created": "Durum sayfası oluşturuldu",
+    "toast_updated": "Durum sayfası güncellendi",
+    "toast_deleted": "Durum sayfası silindi",
+    "toast_delete_failed": "Durum sayfası silinemedi",
+    "toast_load_failed": "Durum sayfaları yüklenemedi",
+    "toast_save_failed": "Durum sayfası kaydedilemedi"
   },
   "pricing": {
     "badge": "Basit Fiyatlandırma",

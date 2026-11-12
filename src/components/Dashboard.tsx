@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useDeferredValue, mem
 import { Link } from 'react-router-dom';
 import { Plus, CheckCircle2, XCircle, Clock, ChevronRight, ChevronDown, Trash2, Pause, Play, Globe, ExternalLink, Activity, Search, Filter, ArrowUpRight, CheckSquare, Square, Lock, FolderPlus, Folder, MoreVertical, Edit2, FolderOpen, Settings2, AlertTriangle } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
+import { tr as trLocale } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import api from '../lib/api';
@@ -47,8 +48,22 @@ const MiniAvailabilityHistory = memo(function MiniAvailabilityHistory({ history:
 // yalnizca degisen kart yeniden cizilir. Kart basina 'layout' animasyonu ve
 // giris animasyonu kaldirildi: motion her render'da 600 kartin konumunu olcuyordu.
 // content-visibility ekran disindaki kartlarin cizimini tarayiciya erteletir.
+// Kartlarda ve basliklarda ortak durum gosterimi. Bakim (maintenance) onceden
+// "else" dalina dusup kirmizi "Cokmus" gorunuyordu.
+export const monitorStatusView = (monitor: any) => {
+  if (monitor.status === 'paused') return { key: 'paused', dot: 'bg-zinc-600', badge: 'bg-zinc-800 text-zinc-500' };
+  switch (monitor.currentStatus) {
+    case 'up': return { key: 'operational', dot: 'bg-emerald-500', badge: 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' };
+    case 'degraded': return { key: 'degraded', dot: 'bg-amber-500', badge: 'bg-amber-500/10 text-amber-500 border border-amber-500/20' };
+    case 'maintenance': return { key: 'maintenance', dot: 'bg-blue-500', badge: 'bg-blue-500/10 text-blue-400 border border-blue-500/20' };
+    default: return { key: 'down', dot: 'bg-red-500', badge: 'bg-red-500/10 text-red-500 border border-red-500/20' };
+  }
+};
+
 const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, toggleSelectMonitor, toggleStatus, deleteMonitor }: any) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const view = monitorStatusView(monitor);
+  const isHttps = monitor.monitorType === 'HTTP' && typeof monitor.url === 'string' && monitor.url.toLowerCase().startsWith('https://');
   return (
     <div
       style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 88px' } as React.CSSProperties}
@@ -72,18 +87,11 @@ const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, to
             )}
           </div>
           <div className="relative">
-            <div className={`w-3 h-3 rounded-full ${
-              monitor.status === 'paused' ? 'bg-zinc-600' : 
-              monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
-              monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
-            }`} />
+            <div className={`w-3 h-3 rounded-full ${view.dot}`} />
             {/* Surekli "ping" animasyonu yalnizca sorunlu monitorlerde: 600
                 kartta 600 sonsuz animasyon tarayiciyi surekli yeniden ciziyordu. */}
-            {monitor.status !== 'paused' && monitor.currentStatus !== 'up' && (
-              <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${
-                monitor.currentStatus === 'up' ? 'bg-emerald-500' : 
-                monitor.currentStatus === 'degraded' ? 'bg-amber-500' : 'bg-red-500'
-              }`} />
+            {(view.key === 'down' || view.key === 'degraded') && (
+              <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${view.dot}`} />
             )}
           </div>
           
@@ -92,27 +100,22 @@ const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, to
               <Link to={`/monitor/${monitor.id}`} className="font-bold text-zinc-100 hover:text-orange-500 transition-colors truncate font-display text-lg">
                 {monitor.name}
               </Link>
-              <div className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                monitor.status === 'paused' ? 'bg-zinc-800 text-zinc-500' : 
-                monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 
-                monitor.currentStatus === 'degraded' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' : 
-                'bg-red-500/10 text-red-500 border border-red-500/20'
-              }`}>
-                {monitor.status === 'paused' ? t('dashboard.paused') : monitor.currentStatus === 'up' ? t('dashboard.operational') : monitor.currentStatus === 'degraded' ? t('dashboard.degraded') : t('dashboard.down')}
+              <div className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${view.badge}`}>
+                {t(`dashboard.${view.key}`)}
               </div>
-              {monitor.monitorType === 'HTTP' && monitor.sslLastChecked && (
+              {isHttps && monitor.sslLastChecked && (
                 <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
                   monitor.sslDaysLeft !== null && monitor.sslDaysLeft <= 0 ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
                   !monitor.sslValid ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
                   monitor.sslDaysLeft <= 7 ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
                   monitor.sslDaysLeft <= 30 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
                   'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                }`} title="SSL Certificate">
+                }`} title={t('dashboard.ssl_certificate')}>
                   <Lock className="w-2.5 h-2.5" />
                   {monitor.sslDaysLeft !== null && monitor.sslDaysLeft <= 0 ? 'EXP' : monitor.sslValid ? (monitor.sslDaysLeft + 'd') : 'ERR'}
                 </div>
               )}
-              {monitor.url && (
+              {monitor.monitorType === 'HTTP' && monitor.url && (
                 <a href={monitor.url} target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-zinc-400">
                   <ExternalLink className="w-3 h-3" />
                 </a>
@@ -135,9 +138,9 @@ const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, to
         <div className="flex items-center gap-6">
           <MiniAvailabilityHistory history={history} />
           <div className="hidden lg:flex flex-col items-end">
-            <span className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mb-1">Last Check</span>
+            <span className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mb-1">{t('dashboard.last_check')}</span>
             <span className="text-[11px] font-medium text-zinc-400">
-              {monitor.lastChecked ? formatDistanceToNow(new Date(monitor.lastChecked), { addSuffix: true }) : 'Never'}
+              {monitor.lastChecked ? formatDistanceToNow(new Date(monitor.lastChecked), { addSuffix: true, locale: language === 'tr' ? trLocale : undefined }) : t('dashboard.never')}
             </span>
           </div>
 
@@ -149,14 +152,14 @@ const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, to
                   ? 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700' 
                   : 'hover:bg-zinc-800 text-zinc-500 hover:text-zinc-100'
               }`}
-              title={monitor.status === 'paused' ? 'Resume' : 'Pause'}
+              title={monitor.status === 'paused' ? t('dashboard.resume') : t('dashboard.pause')}
             >
               {monitor.status === 'paused' ? <Play className="w-4 h-4 fill-current" /> : <Pause className="w-4 h-4 fill-current" />}
             </button>
             <button 
               onClick={() => deleteMonitor(monitor.id)}
               className="p-2.5 hover:bg-red-500/10 rounded-xl text-zinc-500 hover:text-red-500 transition-colors"
-              title="Delete"
+              title={t('common.delete')}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -240,7 +243,8 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
 
       const handleMonitorCreated = (createdMonitor: any) => {
         if (createdMonitor.workspaceId === workspace.id) {
-          setMonitors(prev => [...prev, createdMonitor]);
+          // Olusturma yaniti zaten ekliyor; socket olayi ikinci kopya yaratmasin.
+          setMonitors(prev => prev.some(m => m.id === createdMonitor.id) ? prev : [...prev, createdMonitor]);
         }
       };
 
@@ -277,13 +281,15 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
         delete payload.groupId;
       }
 
-      await api.post('/monitors', payload);
+      const res = await api.post('/monitors', payload);
+      // Liste yalnizca socket olayina guvenmesin (baglanti yoksa monitor gorunmuyordu).
+      setMonitors(prev => prev.some(m => m.id === res.data.id) ? prev : [...prev, res.data]);
       setShowAddModal(false);
       setNewMonitor({ name: '', monitorType: 'HTTP', url: '', port: '', expectedKeyword: '', customHeaders: '', acceptedStatusCodes: '', interval: 60, method: 'GET', groupId: '' });
-      toast.success('Monitor created successfully');
-    } catch (error) {
+      toast.success(t('dashboard.toast_monitor_created'));
+    } catch (error: any) {
       console.error('Error adding monitor:', error);
-      toast.error('Failed to create monitor');
+      toast.error(error?.response?.data?.error || t('dashboard.toast_monitor_create_failed'));
     }
   };
 
@@ -299,23 +305,27 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       setMonitorGroups([...monitorGroups, res.data]);
       setShowGroupModal(false);
       setNewGroup({ name: '', color: '#f97316' });
-      toast.success('Group created successfully');
+      toast.success(t('dashboard.toast_group_created'));
     } catch (error) {
       console.error('Error adding group:', error);
-      toast.error('Failed to create group');
+      toast.error(t('dashboard.toast_group_create_failed'));
     }
   };
 
-  const handleUpdateGroup = async (id: string, updates: any) => {
+  // Basariyi doner: lokasyon ayarlari kaydi hata alinca "kaydedildi" deyip
+  // modali kapatiyordu, cunku hata burada yutuluyordu.
+  const handleUpdateGroup = async (id: string, updates: any): Promise<boolean> => {
     try {
       const res = await api.put(`/monitor-groups/${id}`, updates);
       setMonitorGroups(prev => prev.map(g => g.id === id ? res.data : g));
       if (updates.name) {
-        toast.success('Group renamed');
+        toast.success(t('dashboard.toast_group_renamed'));
       }
-    } catch (error) {
+      return true;
+    } catch (error: any) {
       console.error('Error updating group:', error);
-      toast.error('Failed to update group');
+      toast.error(error?.response?.data?.error || t('dashboard.toast_group_update_failed'));
+      return false;
     }
   };
 
@@ -347,13 +357,14 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       Object.entries(obj || {}).filter(([, v]) => typeof v === 'string' && v.trim() !== '')
     );
     try {
-      await handleUpdateGroup(compositeSettings.id, {
+      const ok = await handleUpdateGroup(compositeSettings.id, {
         compositeEnabled: compositeSettings.compositeEnabled,
         degradedThreshold: Number(compositeSettings.degradedThreshold) || 1,
         suppressMemberAlerts: compositeSettings.suppressMemberAlerts,
         degradedChannels: clean(compositeSettings.degradedChannels),
         downChannels: clean(compositeSettings.downChannels)
       });
+      if (!ok) return;
       toast.success(t('dashboard.composite_saved'));
       setCompositeSettings(null);
     } catch {
@@ -362,14 +373,14 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
   };
 
   const handleDeleteGroup = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this group? The monitors inside will NOT be deleted, they will just be ungrouped.')) {
+    if (window.confirm(t('dashboard.confirm_delete_group'))) {
       try {
         await api.delete(`/monitor-groups/${id}`);
         setMonitorGroups(prev => prev.filter(g => g.id !== id));
         setMonitors(prev => prev.map(m => m.groupId === id ? { ...m, groupId: null } : m));
-        toast.success('Group deleted');
+        toast.success(t('dashboard.toast_group_deleted'));
       } catch (error) {
-        toast.error('Failed to delete group');
+        toast.error(t('dashboard.toast_group_delete_failed'));
       }
     }
   };
@@ -378,10 +389,10 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     try {
       const res = await api.put(`/monitors/${monitorId}`, { groupId });
       setMonitors(prev => prev.map(m => m.id === monitorId ? res.data : m));
-      toast.success(`Monitor moved`);
+      toast.success(t('dashboard.toast_monitor_moved'));
       setGroupDropdownOpen(null);
     } catch (error) {
-      toast.error('Failed to move monitor');
+      toast.error(t('dashboard.toast_move_failed'));
     }
   };
 
@@ -390,10 +401,10 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     try {
       await api.put('/monitors/bulk/action', { ids: selectedMonitors, action: 'move', groupId });
       setMonitors(prev => prev.map(m => selectedMonitors.includes(m.id) ? { ...m, groupId } : m));
-      toast.success(`${selectedMonitors.length} monitors moved`);
+      toast.success(t('dashboard.toast_monitors_moved').replace('{count}', String(selectedMonitors.length)));
       setSelectedMonitors([]);
     } catch (error) {
-      toast.error('Failed to move monitors');
+      toast.error(t('dashboard.toast_move_failed'));
     }
   };
 
@@ -406,31 +417,30 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     try {
       const res = await api.put(`/monitors/${monitor.id}`, { status: newStatus });
       setMonitors(prev => prev.map(m => m.id === monitor.id ? res.data : m));
-      toast.success(`Monitor ${newStatus === 'paused' ? 'paused' : 'resumed'}`, {
-        description: `${monitor.name} is now ${newStatus === 'paused' ? 'paused' : 'active'}.`
-      });
+      toast.success(newStatus === 'paused' ? t('dashboard.toast_paused') : t('dashboard.toast_resumed'), { description: monitor.name });
     } catch (error) {
       console.error('Error toggling status:', error);
-      toast.error('Failed to update monitor status');
+      toast.error(t('dashboard.toast_status_failed'));
     }
-  }, []);
+  }, [t]);
 
   const deleteMonitor = useCallback(async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this monitor?')) {
+    if (window.confirm(t('dashboard.confirm_delete_monitor'))) {
       try {
         await api.delete(`/monitors/${id}`);
-        toast.success('Monitor deleted');
+        setMonitors(prev => prev.filter(m => m.id !== id));
+        toast.success(t('dashboard.toast_monitor_deleted'));
       } catch (error) {
-        toast.error('Failed to delete monitor');
+        toast.error(t('dashboard.toast_monitor_delete_failed'));
       }
     }
-  }, []);
+  }, [t]);
 
   const handleBulkAction = async (action: 'pause' | 'resume' | 'delete') => {
     if (selectedMonitors.length === 0) return;
 
     if (action === 'delete') {
-      if (!window.confirm(`Are you sure you want to delete ${selectedMonitors.length} monitors?`)) {
+      if (!window.confirm(t('dashboard.confirm_bulk_delete').replace('{count}', String(selectedMonitors.length)))) {
         return;
       }
     }
@@ -438,11 +448,11 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     try {
       await api.put('/monitors/bulk/action', { ids: selectedMonitors, action });
       
-      toast.success(`Successfully ${action}d ${selectedMonitors.length} monitors`);
+      toast.success(t(`dashboard.toast_bulk_${action}`).replace('{count}', String(selectedMonitors.length)));
       setSelectedMonitors([]);
     } catch (error) {
       console.error(`Error performing bulk ${action}:`, error);
-      toast.error(`Failed to ${action} monitors`);
+      toast.error(t('dashboard.toast_bulk_failed'));
     }
   };
 
@@ -484,16 +494,21 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
 
   const selectedSet = useMemo(() => new Set(selectedMonitors), [selectedMonitors]);
 
-  const { upCount, degradedCount, downCount, pausedCount } = useMemo(() => {
-    let upCount = 0, degradedCount = 0, downCount = 0, pausedCount = 0;
+  const { upCount, degradedCount, downCount, pausedCount, maintenanceCount } = useMemo(() => {
+    let upCount = 0, degradedCount = 0, downCount = 0, pausedCount = 0, maintenanceCount = 0;
     for (const m of monitors) {
       if (m.status === 'paused') { pausedCount++; continue; }
       if (m.currentStatus === 'up') upCount++;
       else if (m.currentStatus === 'degraded') degradedCount++;
-      else if (m.currentStatus === 'down') downCount++;
+      else if (m.currentStatus === 'maintenance') maintenanceCount++;
+      else downCount++;
     }
-    return { upCount, degradedCount, downCount, pausedCount };
+    return { upCount, degradedCount, downCount, pausedCount, maintenanceCount };
   }, [monitors]);
+
+  // Arama degisince secim temizlenir: aksi halde ekranda gorunmeyen secili
+  // monitorler toplu silme/duraklatmaya dahil oluyordu.
+  useEffect(() => { setSelectedMonitors([]); }, [deferredQuery]);
 
   return (
     <div className="max-w-7xl mx-auto px-6">
@@ -535,7 +550,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
             className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all hover:bg-zinc-800"
           >
             <FolderPlus className="w-5 h-5" />
-            <span className="hidden sm:inline">New Group</span>
+            <span className="hidden sm:inline">{t('dashboard.new_group')}</span>
           </motion.button>
           <motion.button 
             initial={{ opacity: 0, scale: 0.9 }}
@@ -552,11 +567,12 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       </header>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-12">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-12">
         {[
           { label: t('dashboard.operational'), value: upCount, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
           { label: t('dashboard.degraded'), value: degradedCount, icon: Activity, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
           { label: t('dashboard.outages'), value: downCount, icon: XCircle, color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/20' },
+          { label: t('dashboard.maintenance'), value: maintenanceCount, icon: Clock, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
           { label: t('dashboard.paused'), value: pausedCount, icon: Pause, color: 'text-zinc-500', bg: 'bg-zinc-500/10', border: 'border-zinc-500/20' }
         ].map((stat, i) => (
           <motion.div 
@@ -604,14 +620,14 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                 <button 
                   onClick={() => handleBulkAction('resume')}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-400 transition-colors"
-                  title="Resume Selected"
+                  title={t('dashboard.resume_selected')}
                 >
                   <Play className="w-4 h-4" />
                 </button>
                 <button 
                   onClick={() => handleBulkAction('pause')}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-orange-400 transition-colors"
-                  title="Pause Selected"
+                  title={t('dashboard.pause_selected')}
                 >
                   <Pause className="w-4 h-4" />
                 </button>
@@ -619,7 +635,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                 <button 
                   onClick={() => handleBulkAction('delete')}
                   className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-400 hover:text-red-500 transition-colors"
-                  title="Delete Selected"
+                  title={t('dashboard.delete_selected')}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -628,16 +644,13 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
             <button 
               onClick={toggleSelectAll}
               className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors flex items-center gap-2"
-              title={selectedMonitors.length === filteredMonitors.length && filteredMonitors.length > 0 ? "Deselect All" : "Select All"}
+              title={selectedMonitors.length === filteredMonitors.length && filteredMonitors.length > 0 ? t('dashboard.deselect_all') : t('dashboard.select_all')}
             >
               {selectedMonitors.length === filteredMonitors.length && filteredMonitors.length > 0 ? (
                 <CheckSquare className="w-4 h-4 text-orange-500" />
               ) : (
                 <Square className="w-4 h-4" />
               )}
-            </button>
-            <button className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors">
-              <Filter className="w-4 h-4" />
             </button>
             <button 
               onClick={() => setGroupDropdownOpen(groupDropdownOpen === 'bulk' ? null : 'bulk')}
@@ -646,7 +659,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
               <FolderOpen className="w-4 h-4" />
               {groupDropdownOpen === 'bulk' && (
                 <div className="absolute top-full right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl z-50 py-1" onClick={(e) => e.stopPropagation()}>
-                  <div className="px-3 py-2 text-xs font-bold text-zinc-500 uppercase tracking-wider border-b border-zinc-800">Move to</div>
+                  <div className="px-3 py-2 text-xs font-bold text-zinc-500 uppercase tracking-wider border-b border-zinc-800">{t('dashboard.move_to')}</div>
                   <button
                     onClick={() => { moveSelectedMonitorsToGroup(null); setGroupDropdownOpen(null); }}
                     className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors flex items-center gap-2"
@@ -668,7 +681,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
               )}
             </button>
             <div className="h-8 w-[1px] bg-zinc-800 mx-2" />
-            <span className="text-xs text-zinc-500 font-medium">{filteredMonitors.length} results</span>
+            <span className="text-xs text-zinc-500 font-medium">{t('dashboard.results').replace('{count}', String(filteredMonitors.length))}</span>
           </div>
         </div>
 
@@ -688,7 +701,11 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                   }}
                 >
                   <div className="flex items-center gap-4">
-                    <button className="text-zinc-500 hover:text-zinc-300 transition-colors">
+                    <button
+                      onClick={() => handleUpdateGroup(group.id, { collapsed: !group.collapsed })}
+                      className="text-zinc-500 hover:text-zinc-300 transition-colors"
+                      aria-label={group.collapsed ? t('dashboard.expand_group') : t('dashboard.collapse_group')}
+                    >
                       {group.collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: group.color }} />
@@ -744,7 +761,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                         }`}
                         title={t('dashboard.composite_badge_title')}
                       >
-                        {group.compositeStatus || 'up'}
+                        {t(`dashboard.composite_status_${group.compositeStatus || 'up'}`)}
                       </span>
                     )}
                     <button
@@ -757,7 +774,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group.id); }}
                       className="p-2 hover:bg-red-500/10 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
-                      title="Delete Group"
+                      title={t('dashboard.delete_group')}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -807,7 +824,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                 <div className="px-6 py-4 flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <Folder className="w-5 h-5 text-zinc-500" />
-                    <h3 className="text-lg font-bold text-zinc-300 font-display">Ungrouped</h3>
+                    <h3 className="text-lg font-bold text-zinc-300 font-display">{t('dashboard.ungrouped')}</h3>
                     <span className="text-xs font-bold text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">{ungroupedMonitors.length}</span>
                   </div>
                 </div>
@@ -836,7 +853,12 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
               className="py-20 text-center border-2 border-dashed border-zinc-900 rounded-3xl"
             >
               <Globe className="w-12 h-12 text-zinc-800 mx-auto mb-4" />
-              <p className="text-zinc-500 font-medium">No monitors found matching your search.</p>
+              <p className="text-zinc-500 font-medium">{searchQuery ? t('dashboard.no_search_results') : t('dashboard.empty_state')}</p>
+              {!searchQuery && (
+                <button onClick={() => setShowAddModal(true)} className="mt-6 bg-white text-zinc-950 px-6 py-3 rounded-2xl font-bold inline-flex items-center gap-2">
+                  <Plus className="w-4 h-4" /> {t('dashboard.add_monitor')}
+                </button>
+              )}
             </motion.div>
           )}
         </div>
@@ -869,20 +891,20 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                     <input 
                       type="text" 
                       required
-                      placeholder="e.g. Production API"
+                      placeholder={t('dashboard.name_placeholder')}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
                       value={newMonitor.name}
                       onChange={e => setNewMonitor({...newMonitor, name: e.target.value})}
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Group</label>
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{t('dashboard.group')}</label>
                     <select 
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm appearance-none"
                       value={newMonitor.groupId || ''}
                       onChange={e => setNewMonitor({...newMonitor, groupId: e.target.value})}
                     >
-                      <option value="">None (Ungrouped)</option>
+                      <option value="">{t('dashboard.no_group')}</option>
                       {monitorGroups.map(g => (
                         <option key={g.id} value={g.id}>{g.name}</option>
                       ))}
@@ -911,7 +933,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                         <input 
                           type={newMonitor.monitorType === 'HTTP' ? 'url' : 'text'} 
                           required={newMonitor.monitorType !== 'HEARTBEAT'}
-                          placeholder={newMonitor.monitorType === 'TCP' ? 'e.g. 192.168.1.1' : newMonitor.monitorType === 'PING' ? 'e.g. 8.8.8.8' : 'https://api.example.com'}
+                          placeholder={newMonitor.monitorType === 'TCP' ? 'db.example.com' : newMonitor.monitorType === 'PING' ? 'e.g. 8.8.8.8' : 'https://api.example.com'}
                           className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
                           value={newMonitor.url}
                           onChange={e => setNewMonitor({...newMonitor, url: e.target.value})}
@@ -1170,22 +1192,22 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-[2.5rem] p-10 shadow-2xl relative z-10"
             >
-              <h2 className="text-3xl font-bold mb-8 font-display">New Group</h2>
+              <h2 className="text-3xl font-bold mb-8 font-display">{t('dashboard.new_group')}</h2>
               
               <form onSubmit={handleAddGroup} className="space-y-6">
                 <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Group Name</label>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{t('dashboard.group_name')}</label>
                   <input 
                     type="text" 
                     required
-                    placeholder="e.g. Production Services"
+                    placeholder={t('dashboard.group_name_placeholder')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
                     value={newGroup.name}
                     onChange={e => setNewGroup({...newGroup, name: e.target.value})}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">Color</label>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{t('dashboard.color')}</label>
                   <div className="flex gap-2 flex-wrap">
                     {['#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#eab308'].map(color => (
                       <button

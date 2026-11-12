@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Globe, Plus, Link as LinkIcon, Settings, Trash2, CheckCircle2, Activity } from 'lucide-react';
+import { Globe, Plus, Link as LinkIcon, Settings, Trash2, CheckCircle2, Activity, Lock, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 
@@ -41,7 +41,7 @@ export default function StatusPagesList({ workspace }: any) {
         setGroups(groupsRes.data);
       } catch (err) {
         console.error(err);
-        toast.error('Failed to load status pages');
+        toast.error(t('status_pages.toast_load_failed'));
       } finally {
         setLoading(false);
       }
@@ -64,26 +64,26 @@ export default function StatusPagesList({ workspace }: any) {
       if (editingId) {
         const res = await api.put(`/status-pages/${editingId}`, payload);
         setPages(pages.map(p => p.id === editingId ? res.data : p));
-        toast.success('Status page updated');
+        toast.success(t('status_pages.toast_updated'));
       } else {
         const res = await api.post('/status-pages', { ...payload, workspaceId: workspace.id });
         setPages([...pages, res.data]);
-        toast.success('Status page created');
+        toast.success(t('status_pages.toast_created'));
       }
       setShowModal(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to save status page');
+      toast.error(err.response?.data?.error || t('status_pages.toast_save_failed'));
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this status page?')) return;
+    if (!window.confirm(t('status_pages.confirm_delete'))) return;
     try {
       await api.delete(`/status-pages/${id}`);
       setPages(pages.filter(p => p.id !== id));
-      toast.success('Status page deleted');
+      toast.success(t('status_pages.toast_deleted'));
     } catch (err) {
-      toast.error('Failed to delete status page');
+      toast.error(t('status_pages.toast_delete_failed'));
     }
   };
 
@@ -202,7 +202,14 @@ export default function StatusPagesList({ workspace }: any) {
           >
             <div className="absolute top-0 right-0 w-32 h-32 blur-[60px] -z-10 opacity-20 transition-opacity group-hover:opacity-40" style={{ backgroundColor: page.themeColor }} />
             
-            <h3 className="text-2xl font-black text-white font-display tracking-tight mb-2">{page.title}</h3>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-2xl font-black text-white font-display tracking-tight">{page.title}</h3>
+              {page.passwordProtected && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-bold" title={t('status_pages.password_protected')}>
+                  <Lock className="w-3 h-3" /> {t('status_pages.password_protected')}
+                </span>
+              )}
+            </div>
             <p className="text-zinc-400 text-sm mb-6 line-clamp-2 min-h-[40px]">{page.description}</p>
             
             <div className="flex items-center gap-2 mb-8 bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
@@ -213,9 +220,21 @@ export default function StatusPagesList({ workspace }: any) {
             </div>
 
             <div className="flex items-center justify-between mt-auto">
-              <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-zinc-500" />
-                <span className="text-xs font-bold text-zinc-500">{t('status_pages.monitors_count').replace('{count}', page.monitors.length)}</span>
+              {/* Sayfalar cogunlukla lokasyon (grup) kullaniyor; yalnizca monitor
+                  sayisi gosterildiginde her kart "0 Monitor" yaziyordu. */}
+              <div className="flex items-center gap-4">
+                {(page.groups?.length || 0) > 0 && (
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-zinc-500">
+                    <MapPin className="w-4 h-4" />
+                    {t('status_pages.locations_count').replace('{count}', String(page.groups.length))}
+                  </span>
+                )}
+                {(page.monitors?.length || 0) > 0 || !(page.groups?.length) ? (
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-zinc-500">
+                    <Activity className="w-4 h-4" />
+                    {t('status_pages.monitors_count').replace('{count}', String(page.monitors.length))}
+                  </span>
+                ) : null}
               </div>
               <div className="flex gap-2">
                 <button onClick={() => openEditModal(page)} className="p-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl transition-colors">
@@ -287,7 +306,7 @@ export default function StatusPagesList({ workspace }: any) {
                 <div className="space-y-4">
                   <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] ml-1">{t('status_pages.description')}</label>
                   <textarea 
-                    placeholder="All systems operational."
+                    placeholder={t('status_pages.description_placeholder')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm min-h-[100px]"
                     value={formData.description}
                     onChange={e => setFormData({...formData, description: e.target.value})}

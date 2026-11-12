@@ -28,7 +28,7 @@ export default function Landing() {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="text-7xl md:text-[10rem] font-black tracking-tighter mb-10 leading-[0.8] font-display text-white"
+          className="text-6xl md:text-[10rem] font-black tracking-tighter mb-10 leading-[1.05] md:leading-[0.9] font-display text-white"
         >
           {t('landing.hero_line1')} <br />
           <span className="text-orange-500">{t('landing.hero_line2')}</span>

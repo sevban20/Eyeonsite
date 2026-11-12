@@ -16,6 +16,8 @@ export default function StatusPage() {
   const [password, setPassword] = useState('');
   const [unlocking, setUnlocking] = useState(false);
   const [unlockError, setUnlockError] = useState('');
+  // Var olmayan sayfa onceden "Tum Sistemler Calisiyor" gosteriyordu.
+  const [notFound, setNotFound] = useState(false);
   const { t, language } = useTranslation();
 
   // Erisim jetonu slug bazinda saklanir: ayni tarayicida farkli sayfalar
@@ -64,6 +66,7 @@ export default function StatusPage() {
 
     const fetchStatusPage = async () => {
       try {
+        setNotFound(false);
         let token: string | null = null;
         try { token = localStorage.getItem(tokenKey); } catch {}
         const res = await api.get(`/public-status/${slug}`, {
@@ -75,7 +78,9 @@ export default function StatusPage() {
         // yer almaz — public sayfada sube IP'leri gorunmemeli.
         applyPageData(res.data);
       } catch (err: any) {
-        if (err.response?.status === 401 && err.response?.data?.protected) {
+        if (err.response?.status === 404) {
+          setNotFound(true);
+        } else if (err.response?.status === 401 && err.response?.data?.protected) {
           // Suresi dolmus bir jeton varsa temizle, sifre ekranini goster.
           try { localStorage.removeItem(tokenKey); } catch {}
           setLocked(err.response.data);
@@ -92,12 +97,26 @@ export default function StatusPage() {
     // Sayfa yalnizca kendi monitorlerinin durumunu alir (sunucuda 'sp:<sayfa>'
     // odasi; sifreli sayfada gecerli jeton sart). Guncellemeler ~1 sn'lik
     // paketler halinde gelir: { id, status, currentStatus, lastChecked }[]
+    // Lokasyon (grup) satirlarinin durumu sunucuda uyelerden hesaplaniyor;
+    // tek tek monitorler disinda bir guncelleme gelirse sayfa en fazla 10 sn'de
+    // bir sessizce yeniden cekilir. Onceden lokasyonlar hic guncellenmiyordu.
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefetch = () => {
+      if (refetchTimer) return;
+      refetchTimer = setTimeout(() => { refetchTimer = null; fetchStatusPage(); }, 10_000);
+    };
     const handleMonitorStatuses = (batch: any[]) => {
       const updates = new Map<string, any>(batch.map((u: any) => [u.id, u]));
-      setMonitors(prev => prev.map(m => {
-        const u = m.kind === 'monitor' ? updates.get(m.id) : undefined;
-        return u ? { ...m, status: u.status, currentStatus: u.currentStatus, lastChecked: u.lastChecked } : m;
-      }));
+      let touchesLocation = false;
+      setMonitors(prev => {
+        const direct = new Set(prev.filter(m => m.kind === 'monitor').map(m => m.id));
+        touchesLocation = batch.some((u: any) => !direct.has(u.id));
+        return prev.map(m => {
+          const u = m.kind === 'monitor' ? updates.get(m.id) : undefined;
+          return u ? { ...m, status: u.status, currentStatus: u.currentStatus, lastChecked: u.lastChecked } : m;
+        });
+      });
+      if (touchesLocation) scheduleRefetch();
     };
     const joinRoom = () => {
       let token: string | null = null;
@@ -119,6 +138,7 @@ export default function StatusPage() {
       socket.off('connect', joinRoom);
       socket.off('monitor-statuses', handleMonitorStatuses);
       socket.off('monitor-deleted', handleMonitorDeleted);
+      if (refetchTimer) clearTimeout(refetchTimer);
     };
   }, [slug]);
 
@@ -174,7 +194,24 @@ export default function StatusPage() {
     );
   }
 
-  const someDown = monitors.some(m => m.currentStatus === 'down' && m.status !== 'paused');
+  if (notFound) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+        <div className="text-center">
+          <h1 className="text-2xl font-black mb-2">{t('status_page.not_found_title')}</h1>
+          <p className="text-sm text-zinc-500">{t('status_page.not_found_desc')}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Genel durum: herhangi biri down ise kirmizi; degraded, kismi kesinti veya
+  // bakim varsa sari. Onceden yalnizca "down"a bakiliyor, kismi kesintideki bir
+  // lokasyon varken bile yesil "her sey yolunda" gosteriliyordu.
+  const active = monitors.filter(m => m.status !== 'paused');
+  const someDown = active.some(m => m.currentStatus === 'down');
+  const someIssue = !someDown && active.some(m => m.currentStatus === 'degraded' || m.currentStatus === 'maintenance');
+  const upper = (s: string) => s.toLocaleUpperCase(language === 'tr' ? 'tr-TR' : 'en-US');
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 selection:bg-orange-500/30">
@@ -193,9 +230,10 @@ export default function StatusPage() {
           <div className="flex items-center gap-4">
             <motion.div 
               whileHover={{ scale: 1.1, rotate: 5 }}
-              className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center shadow-2xl shadow-orange-500/20"
+              className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-2xl overflow-hidden"
+              style={{ backgroundColor: statusPage?.themeColor || '#f97316' }}
             >
-              <Activity className="w-8 h-8 text-white" />
+              {statusPage?.logoUrl ? <img src={statusPage.logoUrl} alt="" className="w-full h-full object-cover" /> : <Activity className="w-8 h-8 text-white" />}
             </motion.div>
             <div>
               <h1 className="text-3xl font-black font-display tracking-tight text-white">
@@ -216,17 +254,17 @@ export default function StatusPage() {
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className={`glass p-10 rounded-[3rem] mb-16 flex flex-col md:flex-row items-center gap-8 border relative overflow-hidden ${
-            someDown ? 'border-red-500/20 bg-red-500/5' : 'border-green-500/20 bg-green-500/5'
+            someDown ? 'border-red-500/20 bg-red-500/5' : someIssue ? 'border-amber-500/20 bg-amber-500/5' : 'border-green-500/20 bg-green-500/5'
           }`}
         >
           <div className={`absolute top-0 right-0 w-40 h-40 blur-[80px] -z-10 ${
-            someDown ? 'bg-red-500/10' : 'bg-green-500/10'
+            someDown ? 'bg-red-500/10' : someIssue ? 'bg-amber-500/10' : 'bg-green-500/10'
           }`} />
           
           <div className={`p-6 rounded-[2rem] ${
-            someDown ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'
+            someDown ? 'bg-red-500/10 text-red-500' : someIssue ? 'bg-amber-500/10 text-amber-500' : 'bg-green-500/10 text-green-500'
           }`}>
-            {someDown ? (
+            {someDown || someIssue ? (
               <AlertCircle className="w-16 h-16" />
             ) : (
               <ShieldCheck className="w-16 h-16" />
@@ -234,11 +272,11 @@ export default function StatusPage() {
           </div>
           <div className="text-center md:text-left">
             <h2 className="text-3xl font-black mb-2 font-display tracking-tight text-white">
-              {someDown ? t('status_page.some_issues') : t('status_page.all_operational')}
+              {someDown ? t('status_page.some_issues') : someIssue ? t('status_page.partial_issues') : t('status_page.all_operational')}
             </h2>
             <p className="text-zinc-400 font-medium leading-relaxed max-w-md">
-              {someDown 
-                ? t('status_pages.investigating_issues') 
+              {someDown || someIssue
+                ? t('status_pages.investigating_issues')
                 : t('status_pages.normal_parameters')}
             </p>
           </div>
@@ -284,18 +322,21 @@ export default function StatusPage() {
                       monitor.currentStatus === 'up' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
                       monitor.currentStatus === 'degraded' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' :
                       monitor.currentStatus === 'nodata' ? 'bg-zinc-800 text-zinc-500' :
+                      monitor.currentStatus === 'maintenance' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
                       'bg-red-500/10 text-red-500 border border-red-500/20'
                     }`}>
-                      {monitor.status === 'paused' ? t('dashboard.paused').toUpperCase() :
-                       monitor.currentStatus === 'up' ? t('status_page.operational').toUpperCase() :
-                       monitor.currentStatus === 'degraded' ? (monitor.kind === 'location' ? t('status_page.partial_outage') : t('status_page.degraded')).toUpperCase() :
-                       monitor.currentStatus === 'nodata' ? t('status_page.no_data').toUpperCase() :
-                       t('status_page.down').toUpperCase()}
+                      {monitor.status === 'paused' ? upper(t('dashboard.paused')) :
+                       monitor.currentStatus === 'up' ? upper(t('status_page.operational')) :
+                       monitor.currentStatus === 'degraded' ? upper(monitor.kind === 'location' ? t('status_page.partial_outage') : t('status_page.degraded')) :
+                       monitor.currentStatus === 'nodata' ? upper(t('status_page.no_data')) :
+                       monitor.currentStatus === 'maintenance' ? upper(t('dashboard.maintenance')) :
+                       upper(t('status_page.down'))}
                     </div>
                     <div className={`w-3 h-3 rounded-full shadow-lg ${
                       monitor.status === 'paused' || monitor.currentStatus === 'nodata' ? 'bg-zinc-700' :
                       monitor.currentStatus === 'up' ? 'bg-emerald-500 shadow-emerald-500/20' :
                       monitor.currentStatus === 'degraded' ? 'bg-amber-500 shadow-amber-500/20' :
+                      monitor.currentStatus === 'maintenance' ? 'bg-blue-500 shadow-blue-500/20' :
                       'bg-red-500 shadow-red-500/20'
                     }`} />
                   </div>
@@ -361,7 +402,7 @@ export default function StatusPage() {
 
                     <div className="flex items-center justify-between text-[9px] font-black text-zinc-500 uppercase tracking-widest">
                       <span>{t('monitor.90_days_ago')}</span>
-                      <span className="text-zinc-400">{monitor.avgUptime !== undefined ? `${monitor.avgUptime}% ${t('monitor.uptime').toLowerCase()}` : ''}</span>
+                      <span className="text-zinc-400">{monitor.avgUptime != null ? `${monitor.avgUptime}% ${t('monitor.uptime').toLowerCase()}` : ''}</span>
                       <span>{t('monitor.today')}</span>
                     </div>
                   </div>
@@ -383,7 +424,7 @@ export default function StatusPage() {
           className="mt-24 text-center"
         >
           <p className="text-zinc-600 text-sm font-medium">
-            {t('status_page.powered_by')} <span className="text-orange-500 font-black uppercase tracking-widest ml-1">Eyeon.site</span>
+            {t('status_page.powered_by')} <span className="text-orange-500 font-black tracking-widest ml-1">Eyeon.site</span>
           </p>
         </motion.footer>
       </div>
