@@ -174,7 +174,7 @@ const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, to
 });
 
 export default function Dashboard({ user, workspace }: DashboardProps) {
-  const { t } = useTranslation();
+  const { t, apiError } = useTranslation();
   const [monitors, setMonitors] = useState<any[]>([]);
   const [monitorGroups, setMonitorGroups] = useState<any[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -289,7 +289,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       toast.success(t('dashboard.toast_monitor_created'));
     } catch (error: any) {
       console.error('Error adding monitor:', error);
-      toast.error(error?.response?.data?.error || t('dashboard.toast_monitor_create_failed'));
+      toast.error(apiError(error, 'dashboard.toast_monitor_create_failed'));
     }
   };
 
@@ -324,7 +324,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
       return true;
     } catch (error: any) {
       console.error('Error updating group:', error);
-      toast.error(error?.response?.data?.error || t('dashboard.toast_group_update_failed'));
+      toast.error(apiError(error, 'dashboard.toast_group_update_failed'));
       return false;
     }
   };
@@ -665,7 +665,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                     className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors flex items-center gap-2"
                   >
                     <Folder className="w-4 h-4 text-zinc-500" />
-                    Ungrouped
+                    {t('dashboard.ungrouped')}
                   </button>
                   {monitorGroups.map(g => (
                     <button
@@ -803,7 +803,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                         ))}
                         {groupMonitors.length === 0 && (
                           <div className="text-center py-8 text-zinc-500 text-sm border-2 border-dashed border-zinc-800 rounded-2xl mx-2 mb-2">
-                            No monitors in this group
+                            {t('dashboard.no_monitors_in_group')}
                           </div>
                         )}
                       </div>
@@ -969,7 +969,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                         <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{t('dashboard.expected_keyword')}</label>
                         <input 
                           type="text" 
-                          placeholder="e.g. 'Welcome' or '{&quot;status&quot;:&quot;ok&quot;}'"
+                          placeholder={t('dashboard.keyword_placeholder')}
                           className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
                           value={newMonitor.expectedKeyword}
                           onChange={e => setNewMonitor({...newMonitor, expectedKeyword: e.target.value})}
@@ -1227,13 +1227,13 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                     onClick={() => setShowGroupModal(false)}
                     className="flex-1 px-6 py-4 rounded-2xl font-bold border border-zinc-800 hover:bg-zinc-800 transition-colors text-sm"
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button 
                     type="submit"
                     className="flex-1 bg-white text-zinc-950 px-6 py-4 rounded-2xl font-bold transition-all shadow-xl shadow-white/5 text-sm"
                   >
-                    Create
+                    {t('common.create')}
                   </button>
                 </div>
               </form>

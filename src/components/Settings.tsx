@@ -7,7 +7,7 @@ import { useAuth } from '../lib/auth';
 import { useTranslation } from '../lib/i18n';
 
 export default function Settings({ user, workspace }: { user: any; workspace: any }) {
-  const { t } = useTranslation();
+  const { t, apiError } = useTranslation();
   const { updateUser } = useAuth();
   const isOwner = !!workspace && workspace.userId === user?.id;
   const [profileForm, setProfileForm] = useState({
@@ -96,7 +96,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       setManualSecret(res.data.secret);
       setTwoFaStep('setup');
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to start 2FA setup');
+      toast.error(apiError(err, 'errors.twofa_setup_failed'));
     } finally {
       setTwoFaLoading(false);
     }
@@ -113,7 +113,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       setTwoFaCode('');
       toast.success(t('settings.twofa_enabled_toast'));
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Invalid code');
+      toast.error(apiError(err, 'errors.invalid_code'));
     } finally {
       setTwoFaLoading(false);
     }
@@ -129,7 +129,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       setDisablePassword('');
       toast.success(t('settings.twofa_disabled_toast'));
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Incorrect password');
+      toast.error(apiError(err, 'errors.incorrect_password'));
     } finally {
       setTwoFaLoading(false);
     }
@@ -146,7 +146,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       setNewKeyName('');
       toast.success(t('settings.apikeys_created_toast'));
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to create API key');
+      toast.error(apiError(err, 'errors.apikey_create_failed'));
     } finally {
       setCreatingKey(false);
     }
@@ -159,7 +159,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       setApiKeys(apiKeys.filter(k => k.id !== id));
       toast.success(t('settings.apikeys_deleted_toast'));
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to revoke API key');
+      toast.error(apiError(err, 'errors.apikey_delete_failed'));
     }
   };
 
@@ -188,11 +188,11 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       setInviteEmail('');
       toast.success(t('settings.team_added'));
     } catch (err: any) {
-      const msg = err.response?.data?.error || 'Failed to add member';
+      const msg = err.response?.data?.error;
       if (msg === 'User not found') toast.error(t('settings.team_user_not_found'));
       else if (msg === 'User is already a member') toast.error(t('settings.team_already_member'));
       else if (msg === 'User is already the owner') toast.error(t('settings.team_already_owner'));
-      else toast.error(msg);
+      else toast.error(apiError(err, 'errors.member_add_failed'));
     } finally {
       setInviteLoading(false);
     }
@@ -205,7 +205,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       setMembers(members.filter(m => m.memberId !== memberId));
       toast.success(t('settings.team_removed'));
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to remove member');
+      toast.error(apiError(err, 'errors.member_remove_failed'));
     }
   };
 
@@ -219,7 +219,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       // Parola alanlari basaridan sonra temizlenir
       setProfileForm({ ...profileForm, password: '', currentPassword: '' });
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to update user profile');
+      toast.error(apiError(err, 'errors.profile_failed'));
     } finally {
       setLoading(false);
     }
@@ -233,7 +233,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
       await api.put(`/workspaces/${workspace.id}`, workspaceForm);
       toast.success(t('settings.workspace_saved'));
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to update workspace');
+      toast.error(apiError(err, 'errors.workspace_failed'));
     } finally {
       setLoading(false);
     }
@@ -296,7 +296,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
                 <input 
                   type="text" 
                   required
-                  placeholder="e.g. My Organization"
+                  placeholder={t('settings.workspace_name_placeholder')}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold text-white placeholder-zinc-700"
                   value={workspaceForm.name}
                   onChange={(e) => setWorkspaceForm({...workspaceForm, name: e.target.value})}
@@ -342,12 +342,12 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
 
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-4">
-                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">SMTP Username</label>
+                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('settings.smtp_user')}</label>
                   <div className="relative">
                     <User className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                     <input 
                       type="text" 
-                      placeholder="user@example.com"
+                      placeholder={t('settings.smtp_user_placeholder')}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold text-white placeholder-zinc-700"
                       value={workspaceForm.smtpUser}
                       onChange={(e) => setWorkspaceForm({...workspaceForm, smtpUser: e.target.value})}
@@ -356,7 +356,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
                 </div>
 
                 <div className="space-y-4">
-                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">SMTP Password</label>
+                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('settings.smtp_pass')}</label>
                   <div className="relative">
                     <Lock className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                     <input 
@@ -371,12 +371,12 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
               </div>
 
               <div className="space-y-4">
-                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">From Address</label>
+                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('settings.smtp_from')}</label>
                 <div className="relative">
                   <Mail className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                   <input 
                     type="email" 
-                    placeholder="alerts@mycompany.com"
+                    placeholder={t('settings.smtp_from_placeholder')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold text-white placeholder-zinc-700"
                     value={workspaceForm.smtpFrom}
                     onChange={(e) => setWorkspaceForm({...workspaceForm, smtpFrom: e.target.value})}
@@ -569,7 +569,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
               <div className="bg-zinc-950/50 border border-zinc-800/50 rounded-2xl p-6 mt-4">
                 <p className="text-sm text-zinc-400 mb-4">{t('settings.twofa_setup_desc')}</p>
                 <div className="flex flex-col sm:flex-row gap-6 items-start">
-                  {qrCode && <img src={qrCode} alt="TOTP QR code" className="w-40 h-40 rounded-xl border border-zinc-800 bg-white p-2" />}
+                  {qrCode && <img src={qrCode} alt={t('settings.twofa_qr_alt')} className="w-40 h-40 rounded-xl border border-zinc-800 bg-white p-2" />}
                   <div className="flex-1 w-full">
                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">{t('settings.twofa_secret_fallback')}</p>
                     <code className="block bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-zinc-300 font-mono mb-4 break-all">{manualSecret}</code>
@@ -736,7 +736,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
                   <Type className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                   <input 
                     type="text" 
-                    placeholder="Your Name"
+                    placeholder={t('settings.name_placeholder')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold text-white placeholder-zinc-700"
                     value={profileForm.name}
                     onChange={(e) => setProfileForm({...profileForm, name: e.target.value})}
@@ -751,7 +751,7 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
                   <input 
                     type="email" 
                     required
-                    placeholder="name@example.com"
+                    placeholder={t('settings.email_placeholder')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold text-white placeholder-zinc-700"
                     value={profileForm.email}
                     onChange={(e) => setProfileForm({...profileForm, email: e.target.value})}

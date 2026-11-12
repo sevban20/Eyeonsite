@@ -21,7 +21,7 @@ export default function Auth() {
   const [preAuthToken, setPreAuthToken] = useState('');
   const [twoFaCode, setTwoFaCode] = useState('');
   const { login } = useAuth();
-  const { t } = useTranslation();
+  const { t, apiError } = useTranslation();
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +50,7 @@ export default function Auth() {
         setUnverifiedEmail(data.email || email);
         setView('unverified');
       } else {
-        setError(data?.error || err.message);
+        setError(apiError(err, 'errors.generic'));
       }
     } finally {
       setLoading(false);
@@ -65,7 +65,7 @@ export default function Auth() {
       const res = await api.post('/auth/2fa/verify', { preAuthToken, token: twoFaCode });
       login(res.data.token, res.data.user);
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message);
+      setError(apiError(err, 'errors.generic'));
     } finally {
       setLoading(false);
     }
