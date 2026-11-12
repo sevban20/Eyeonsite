@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Activity, LogOut, Settings, LayoutDashboard, Bell, Shield, Globe, Eye, Menu, X } from 'lucide-react';
+import { Activity, LogOut, Settings, LayoutDashboard, Bell, Shield, Globe, Eye, Menu, X, BellRing } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAuth } from '../lib/auth';
 import { useTranslation } from '../lib/i18n';
@@ -27,6 +27,7 @@ export default function Navbar({ user, workspace }: NavbarProps) {
   const navItems = [
     { name: t('nav.dashboard'), path: '/dashboard', icon: LayoutDashboard },
     { name: t('nav.alerts'), path: '/alerts', icon: Bell },
+    { name: t('nav.notifications'), path: '/notifications', icon: BellRing },
     { name: t('nav.status_pages'), path: '/status-pages', icon: Globe },
     { name: t('nav.settings'), path: '/settings', icon: Settings },
   ];

@@ -131,6 +131,12 @@ const MonitorCard = memo(function MonitorCard({ monitor, history, isSelected, to
                 </>
               )}
               <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {monitor.interval}s</span>
+              {(monitor.tags || []).slice(0, 3).map((tg: any) => (
+                <span key={tg.id} className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-zinc-900 text-zinc-400">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tg.color }} />{tg.name}
+                </span>
+              ))}
+              {(monitor.tags || []).length > 3 && <span className="hidden sm:inline text-zinc-600">+{monitor.tags.length - 3}</span>}
             </div>
           </div>
         </div>
@@ -238,7 +244,8 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
         const updates = new Map<string, any>();
         for (const m of batch) if (m.workspaceId === workspace.id) updates.set(m.id, m);
         if (updates.size === 0) return;
-        setMonitors(prev => prev.map(m => updates.get(m.id) || m));
+        // Birlestir: socket paketi etiket gibi iliskileri tasimiyor.
+        setMonitors(prev => prev.map(m => updates.has(m.id) ? { ...m, ...updates.get(m.id), tags: updates.get(m.id).tags ?? m.tags } : m));
       };
 
       const handleMonitorCreated = (createdMonitor: any) => {
@@ -329,40 +336,24 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
     }
   };
 
-  // Kanallar sunucuda JSON string olarak tutuluyor; formda nesne olarak
-  // calisip kaydederken nesne gonderiyoruz (sema stringe cevirir).
-  const parseChannels = (raw: any) => {
-    if (!raw) return {};
-    try { return typeof raw === 'string' ? (JSON.parse(raw) || {}) : raw; } catch { return {}; }
-  };
-
   const openCompositeSettings = (group: any) => {
     setCompositeSettings({
       id: group.id,
       name: group.name,
       compositeEnabled: !!group.compositeEnabled,
       degradedThreshold: group.degradedThreshold || 1,
-      suppressMemberAlerts: !!group.suppressMemberAlerts,
-      degradedChannels: parseChannels(group.degradedChannels),
-      downChannels: parseChannels(group.downChannels)
+      suppressMemberAlerts: !!group.suppressMemberAlerts
     });
   };
 
   const handleSaveCompositeSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!compositeSettings) return;
-    // Bos stringleri gondermiyoruz: sema url/email dogrulamasi yapiyor ve
-    // "kanal tanimli degil" ile "bos string" ayrimini korumak istiyoruz.
-    const clean = (obj: any) => Object.fromEntries(
-      Object.entries(obj || {}).filter(([, v]) => typeof v === 'string' && v.trim() !== '')
-    );
     try {
       const ok = await handleUpdateGroup(compositeSettings.id, {
         compositeEnabled: compositeSettings.compositeEnabled,
         degradedThreshold: Number(compositeSettings.degradedThreshold) || 1,
-        suppressMemberAlerts: compositeSettings.suppressMemberAlerts,
-        degradedChannels: clean(compositeSettings.degradedChannels),
-        downChannels: clean(compositeSettings.downChannels)
+        suppressMemberAlerts: compositeSettings.suppressMemberAlerts
       });
       if (!ok) return;
       toast.success(t('dashboard.composite_saved'));
@@ -1117,43 +1108,10 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
                       </span>
                     </label>
 
-                    {(['degradedChannels', 'downChannels'] as const).map(setKey => (
-                      <div key={setKey} className="border border-zinc-800 rounded-3xl p-6">
-                        <div className="flex items-center gap-2 mb-1">
-                          <AlertTriangle className={`w-4 h-4 ${setKey === 'downChannels' ? 'text-red-500' : 'text-amber-500'}`} />
-                          <h3 className="text-sm font-bold">
-                            {setKey === 'downChannels' ? t('dashboard.composite_down_title') : t('dashboard.composite_degraded_title')}
-                          </h3>
-                        </div>
-                        <p className="text-xs text-zinc-500 mb-5">
-                          {setKey === 'downChannels' ? t('dashboard.composite_down_desc') : t('dashboard.composite_degraded_desc')}
-                        </p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {([
-                            ['alertEmail', 'Email', 'email'],
-                            ['telegramChatId', 'Telegram Chat ID', 'text'],
-                            ['slackWebhook', 'Slack Webhook', 'url'],
-                            ['discordWebhook', 'Discord Webhook', 'url'],
-                            ['teamsWebhook', 'Teams Webhook', 'url'],
-                            ['zoomWebhook', 'Zoom Webhook', 'url'],
-                            ['genericWebhook', 'Generic Webhook', 'url']
-                          ] as const).map(([field, label, type]) => (
-                            <div key={field}>
-                              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1">{label}</label>
-                              <input
-                                type={type}
-                                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500 transition-colors text-sm"
-                                value={compositeSettings[setKey]?.[field] || ''}
-                                onChange={e => setCompositeSettings({
-                                  ...compositeSettings,
-                                  [setKey]: { ...compositeSettings[setKey], [field]: e.target.value }
-                                })}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                    <div className="p-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400">
+                      {t('dashboard.composite_notifications_moved')}{' '}
+                      <Link to="/notifications" className="text-orange-400 font-bold">{t('dashboard.composite_go_notifications')}</Link>
+                    </div>
                   </>
                 )}
 

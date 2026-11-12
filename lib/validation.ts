@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isValidStatusCodeSpec } from './http-status';
+import { NOTIFICATION_EVENTS, CHANNEL_TYPES } from './notifications';
 
 // --- INPUT VALIDATION SCHEMAS ---
 //
@@ -53,7 +54,8 @@ export const monitorBaseSchema = z.object({
     .optional().nullable(),
   customHeaders: z.string().max(4000).optional().nullable(),
   heartbeatGrace: z.number().int().min(0).max(1440).optional(),
-  groupId: z.string().uuid().optional().nullable()
+  groupId: z.string().uuid().optional().nullable(),
+  tagIds: z.array(z.string().uuid()).max(50).optional()
 });
 
 // Defaults applied only at creation time — see note above.
@@ -210,3 +212,59 @@ export const registerSchema = z.object({
   password: z.string().min(8).max(128),
   name: z.string().min(1).max(100).optional()
 });
+
+// --- Merkezi bildirim yonetimi ---
+
+const hexColor = z.string().regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+const idList = (max: number) => z.array(z.string().uuid()).max(max);
+
+export const tagCreateSchema = z.object({
+  workspaceId: z.string().uuid(),
+  name: z.string().trim().min(1).max(40),
+  color: hexColor.optional()
+});
+export const tagUpdateSchema = z.object({ name: z.string().trim().min(1).max(40).optional(), color: hexColor.optional() });
+
+export const teamCreateSchema = z.object({
+  workspaceId: z.string().uuid(),
+  name: z.string().trim().min(1).max(60),
+  color: hexColor.optional(),
+  memberIds: idList(500).optional()
+});
+export const teamUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(60).optional(),
+  color: hexColor.optional(),
+  memberIds: idList(500).optional()
+});
+
+// config tipe gore lib/notifications.ts parseChannelConfig ile dogrulanir.
+export const channelCreateSchema = z.object({
+  workspaceId: z.string().uuid(),
+  teamId: z.string().uuid().nullable().optional(),
+  name: z.string().trim().min(1).max(80),
+  type: z.enum(CHANNEL_TYPES),
+  config: z.record(z.string(), z.any()),
+  enabled: z.boolean().optional()
+});
+export const channelUpdateSchema = z.object({
+  teamId: z.string().uuid().nullable().optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  config: z.record(z.string(), z.any()).optional(),
+  enabled: z.boolean().optional()
+});
+
+const ruleFields = {
+  teamId: z.string().uuid().nullable().optional(),
+  name: z.string().trim().min(1).max(100),
+  enabled: z.boolean().optional(),
+  events: z.array(z.enum(NOTIFICATION_EVENTS)).min(1, 'Select at least one event').max(20),
+  allMonitors: z.boolean().optional(),
+  monitorIds: idList(5000).optional(),
+  groupIds: idList(1000).optional(),
+  tagIds: idList(500).optional(),
+  channelIds: idList(100).min(1, 'Select at least one channel')
+};
+export const ruleCreateSchema = z.object({ workspaceId: z.string().uuid(), ...ruleFields });
+export const ruleUpdateSchema = z.object(ruleFields).partial();
+
+export const memberRoleSchema = z.object({ role: z.enum(['ADMIN', 'MEMBER']) });

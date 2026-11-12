@@ -48,6 +48,15 @@ const RULES: Rule[] = [
   [/^(Not found|Workspace not found|Group not found|Member not found)$/i, 'errors.not_found'],
   [/^Internal server error$/i, 'errors.server'],
   [/^Contact form is not available/i, 'errors.contact_unavailable'],
+  [/^You can only (manage|assign|use) (your )?own team/i, 'errors.own_team_only'],
+  [/^Only workspace admins can manage teams/i, 'errors.teams_admin_only'],
+  [/^Only workspace admins can (edit|delete) tags/i, 'errors.tags_admin_only'],
+  [/^A team with this name already exists/i, 'errors.team_exists'],
+  [/^A tag with this name already exists/i, 'errors.tag_exists'],
+  [/^Team members must belong/i, 'errors.team_members_workspace'],
+  [/^Team not found$/i, 'errors.not_found'],
+  [/tags do not belong/i, 'errors.tag_workspace'],
+  [/channels do not belong/i, 'errors.channel_workspace'],
 ];
 
 // Dogrulama hatalari "alan: mesaj" bicimindedir (sunucudaki badRequest).
@@ -62,6 +71,8 @@ const FIELD_KEYS: Record<string, string> = {
   zoomWebhook: 'errors.fields.webhook', genericWebhook: 'errors.fields.webhook', token: 'errors.fields.code',
   message: 'errors.fields.message', subject: 'errors.fields.subject',
   monitorIds: 'errors.fields.monitors', groupIds: 'errors.fields.groups', themeColor: 'errors.fields.color',
+  to: 'errors.fields.recipients', chatId: 'errors.fields.chat_id', events: 'errors.fields.events',
+  channelIds: 'errors.fields.channels', tagIds: 'errors.fields.tags', memberIds: 'errors.fields.team_members',
 };
 
 export function translateApiError(err: any, t: (k: string) => string, language: string, fallbackKey: string): string {

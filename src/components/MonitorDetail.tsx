@@ -43,20 +43,18 @@ export default function MonitorDetail({ user, workspace }: any) {
     interval: 60,
     alertThreshold: 2,
     responseTimeThreshold: null,
-    notifyOnDegraded: false,
     expectedKeyword: '',
     customHeaders: '',
     acceptedStatusCodes: '',
     sslCheckEnabled: true,
     heartbeatGrace: 5,
-    alertEmail: '',
-    slackWebhook: '',
-    telegramChatId: '',
-    zoomWebhook: '',
-    discordWebhook: '',
-    teamsWebhook: '',
-    genericWebhook: ''
+    tagIds: [] as string[]
   });
+  // Bildirimler artik merkezi kurallarla yonetiliyor (/notifications);
+  // burada yalnizca bu monitore hangi kurallarin dokundugu gosterilir.
+  const [routes, setRoutes] = useState<any | null>(null);
+  const [allTags, setAllTags] = useState<any[]>([]);
+  const [newTagName, setNewTagName] = useState('');
 
   const prevStatusRef = useRef<string | null>(null);
 
@@ -111,20 +109,37 @@ export default function MonitorDetail({ user, workspace }: any) {
         interval: monitor.interval || 60,
         alertThreshold: monitor.alertThreshold || 2,
         responseTimeThreshold: monitor.responseTimeThreshold || null,
-        notifyOnDegraded: monitor.notifyOnDegraded || false,
-        alertEmail: monitor.alertEmail || '',
-        slackWebhook: monitor.slackWebhook || '',
-        telegramChatId: monitor.telegramChatId || '',
-        zoomWebhook: monitor.zoomWebhook || '',
-        discordWebhook: monitor.discordWebhook || '',
-        teamsWebhook: monitor.teamsWebhook || '',
-        genericWebhook: monitor.genericWebhook || ''
+        tagIds: (monitor.tags || []).map((x: any) => x.id)
       });
     }
     // Yalnizca baska bir monitor acilinca doldurulur. Onceden her socket
     // guncellemesi formu sifirliyor, kaydedilmemis degisiklikler kayboluyordu.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monitor?.id]);
+
+  const loadRoutes = () => {
+    if (!id) return;
+    api.get(`/monitors/${id}/notification-routes`).then(res => setRoutes(res.data)).catch(() => setRoutes(null));
+  };
+  useEffect(() => {
+    if (!monitor?.id) return;
+    loadRoutes();
+    if (monitor.workspaceId) api.get(`/tags?workspaceId=${monitor.workspaceId}`).then(res => setAllTags(res.data)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monitor?.id]);
+
+  const createTagInline = async () => {
+    const name = newTagName.trim();
+    if (!name || !monitor?.workspaceId) return;
+    try {
+      const res = await api.post('/tags', { workspaceId: monitor.workspaceId, name });
+      setAllTags(prev => [...prev, res.data].sort((a, b) => a.name.localeCompare(b.name)));
+      setSettings((st: any) => ({ ...st, tagIds: [...st.tagIds, res.data.id] }));
+      setNewTagName('');
+    } catch (err) {
+      toast.error(apiError(err, 'notifications.save_failed'));
+    }
+  };
 
   // Durum degisince olay listesini tazele (yeni olay / toparlanma).
   useEffect(() => {
@@ -387,6 +402,7 @@ export default function MonitorDetail({ user, workspace }: any) {
       if (monitor?.monitorType !== 'TCP') delete payload.port;
       const res = await api.put(`/monitors/${id}`, payload);
       setMonitor(res.data);
+      loadRoutes();
       toast.success(t('monitor.toast_settings_saved'));
     } catch (error: any) {
       console.error('Error saving settings:', error);
@@ -1400,118 +1416,71 @@ export default function MonitorDetail({ user, workspace }: any) {
                             <span className="text-xs text-zinc-500 font-bold leading-tight max-w-[220px]">{t('monitor.response_threshold_desc')}</span>
                           </div>
                         </div>
+                      </div>
 
-                        <div className="flex items-center justify-between p-4 bg-zinc-950 border border-zinc-800 rounded-2xl">
-                          <div>
-                            <p className="text-sm font-bold text-white">{t('monitor.notify_degraded')}</p>
-                            <p className="text-xs text-zinc-500 font-medium mt-1">{t('monitor.notify_degraded_desc')}</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setSettings({ ...settings, notifyOnDegraded: !settings.notifyOnDegraded })}
-                            className={`relative inline-flex h-7 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${settings.notifyOnDegraded ? 'bg-amber-500' : 'bg-zinc-700'}`}
-                          >
-                            <span className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${settings.notifyOnDegraded ? 'translate-x-5' : 'translate-x-0'}`} />
-                          </button>
-                        </div>
-
-                        <div className="space-y-4">
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.email_notification')}</label>
-                          <div className="relative">
-                            <Mail className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
+                      <div className="space-y-4">
+                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.tags')}</label>
+                        <div className="flex flex-wrap gap-2">
+                          {allTags.map((tg: any) => {
+                            const on = settings.tagIds.includes(tg.id);
+                            return (
+                              <button
+                                key={tg.id}
+                                type="button"
+                                onClick={() => setSettings({ ...settings, tagIds: on ? settings.tagIds.filter((x: string) => x !== tg.id) : [...settings.tagIds, tg.id] })}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${on ? 'bg-orange-500/15 border-orange-500/40 text-orange-300' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
+                              >
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: tg.color }} />
+                                {tg.name}
+                              </button>
+                            );
+                          })}
+                          <div className="inline-flex items-center gap-1">
                             <input
-                              type="email"
-                              placeholder={t('monitor.email_placeholder')}
-                              className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
-                              value={settings.alertEmail}
-                              onChange={e => setSettings({ ...settings, alertEmail: e.target.value })}
+                              className="w-36 bg-zinc-950 border border-zinc-800 rounded-full px-3 py-1.5 text-xs focus:outline-none focus:border-orange-500"
+                              placeholder={t('monitor.new_tag_placeholder')}
+                              maxLength={40}
+                              value={newTagName}
+                              onChange={e => setNewTagName(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createTagInline(); } }}
                             />
+                            <button type="button" onClick={createTagInline} disabled={!newTagName.trim()} className="p-1.5 rounded-full bg-zinc-800 text-zinc-300 disabled:opacity-40" title={t('common.create')}>
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
+                        <p className="text-xs text-zinc-500">{t('monitor.tags_desc')}</p>
                       </div>
 
-                      <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.slack_webhook')}</label>
-                        <div className="relative">
-                          <Hash className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                          <input
-                            type="url"
-                            placeholder="https://hooks.slack.com/services/..."
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
-                            value={settings.slackWebhook}
-                            onChange={e => setSettings({ ...settings, slackWebhook: e.target.value })}
-                          />
+                      <div className="p-6 bg-zinc-950 border border-zinc-800 rounded-3xl space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-bold text-white">{t('monitor.notification_routes')}</p>
+                            <p className="text-xs text-zinc-500 mt-1">{t('monitor.notification_routes_desc')}</p>
+                          </div>
+                          <Link to="/notifications" className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white flex items-center gap-2">
+                            <ExternalLink className="w-3.5 h-3.5" /> {t('monitor.manage_notifications')}
+                          </Link>
                         </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.telegram_chat_id')}</label>
-                        <div className="relative">
-                          <MessageSquare className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                          <input
-                            type="text"
-                            placeholder="-100123456789"
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
-                            value={settings.telegramChatId}
-                            onChange={e => setSettings({ ...settings, telegramChatId: e.target.value })}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.zoom_webhook')}</label>
-                        <div className="relative">
-                          <Video className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                          <input
-                            type="url"
-                            placeholder="https://zoom.us/..."
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
-                            value={settings.zoomWebhook}
-                            onChange={e => setSettings({ ...settings, zoomWebhook: e.target.value })}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.discord_webhook')}</label>
-                        <div className="relative">
-                          <Hash className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                          <input
-                            type="url"
-                            placeholder="https://discord.com/api/webhooks/..."
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-[#5865F2]/60 transition-colors text-sm"
-                            value={settings.discordWebhook}
-                            onChange={e => setSettings({ ...settings, discordWebhook: e.target.value })}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.teams_webhook')}</label>
-                        <div className="relative">
-                          <Hash className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                          <input
-                            type="url"
-                            placeholder="https://outlook.office.com/webhook/..."
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-[#6264a7]/60 transition-colors text-sm"
-                            value={settings.teamsWebhook}
-                            onChange={e => setSettings({ ...settings, teamsWebhook: e.target.value })}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.generic_webhook')}</label>
-                        <div className="relative">
-                          <Wifi className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
-                          <input
-                            type="url"
-                            placeholder="https://your-service.com/webhook"
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
-                            value={settings.genericWebhook}
-                            onChange={e => setSettings({ ...settings, genericWebhook: e.target.value })}
-                          />
-                        </div>
+                        {routes?.memberAlertsSuppressed && (
+                          <p className="text-xs text-amber-400">{t('monitor.routes_suppressed')}</p>
+                        )}
+                        {routes && routes.routes.length === 0 && (
+                          <p className="text-xs text-amber-400 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {t('monitor.no_routes')}</p>
+                        )}
+                        {routes?.routes?.map((r: any) => (
+                          <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="font-bold text-zinc-200">{r.name}</span>
+                            {r.team && <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">{r.team.name}</span>}
+                            <span className="text-zinc-600">·</span>
+                            {r.events.map((ev: string) => <span key={ev} className="px-2 py-0.5 rounded-lg bg-zinc-900 text-zinc-400">{t(`notifications.events.${ev}`)}</span>)}
+                            <span className="text-zinc-600">→</span>
+                            {r.channelIds.map((cid: string) => {
+                              const c = routes.channels.find((x: any) => x.id === cid);
+                              return <span key={cid} className="px-2 py-0.5 rounded-lg bg-zinc-900 text-zinc-300">{c ? `${c.name} · ${t(`notifications.types.${c.type}`)}` : '—'}</span>;
+                            })}
+                          </div>
+                        ))}
                       </div>
 
                       <div className="flex justify-end pt-6">

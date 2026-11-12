@@ -27,15 +27,22 @@ import {
   maintenanceWindowCreateSchema, userUpdateSchema, monitorTargetError,
   adminBlockSchema, adminRoleSchema, adminSubscriptionSchema,
   monitorGroupCreateSchema, monitorGroupUpdateSchema,
-  apiKeyCreateSchema, totpVerifySchema
+  apiKeyCreateSchema, totpVerifySchema,
+  tagCreateSchema, tagUpdateSchema, teamCreateSchema, teamUpdateSchema,
+  channelCreateSchema, channelUpdateSchema, ruleCreateSchema, ruleUpdateSchema, memberRoleSchema
 } from './lib/validation';
 import { generateApiKey, hashApiKey, looksLikeApiKey } from './lib/apikeys';
 import { generateTotpSecret, totpKeyUri, totpQrCodeDataUrl, verifyTotpToken, generateRecoveryCodes } from './lib/totp';
 import { makeAuditLogger, requestIp } from './lib/audit';
 import {
-  evaluateGroupStatus, compositeTransition, channelSetFor, compositeReason,
+  evaluateGroupStatus, compositeTransition, compositeReason,
   type CompositeStatus
 } from './lib/composite';
+import {
+  matchingRules, channelsForRules, canManageNotificationItem, parseChannelConfig, emailRecipients,
+  formatMessage, eventTitle, planLegacyMigration, NOTIFICATION_EVENTS, CHANNEL_TYPES,
+  type RuleLike, type MatchContext, type NotificationEvent, type Actor
+} from './lib/notifications';
 
 dotenv.config();
 
@@ -1536,7 +1543,7 @@ async function startServer() {
       const ws = await checkWorkspaceAccess(workspaceId, req.user.id);
       if (!ws) return res.status(403).json({ error: 'Forbidden' });
 
-      const monitors = await prisma.monitor.findMany({ where: { workspaceId } });
+      const monitors = await prisma.monitor.findMany({ where: { workspaceId }, include: { tags: { select: { id: true, name: true, color: true } } } });
       res.json(monitors);
     } catch (error: any) {
       serverError(res, error);
@@ -1554,8 +1561,15 @@ async function startServer() {
       if (parsed.data.groupId && !(await groupInWorkspace(parsed.data.groupId, parsed.data.workspaceId))) {
         return res.status(400).json({ error: 'Group does not belong to this workspace' });
       }
+      const { tagIds, ...createData } = parsed.data as any;
+      if (tagIds?.length && (await prisma.tag.count({ where: { id: { in: tagIds }, workspaceId: parsed.data.workspaceId } })) !== new Set(tagIds).size) {
+        return res.status(400).json({ error: 'One or more tags do not belong to this workspace' });
+      }
 
-      const monitor = await prisma.monitor.create({ data: parsed.data });
+      const monitor = await prisma.monitor.create({
+        data: { ...createData, ...(tagIds?.length ? { tags: { connect: tagIds.map((id: string) => ({ id })) } } : {}) },
+        include: { tags: { select: { id: true, name: true, color: true } } }
+      });
       emitMonitorCreated(monitor);
       await logAudit({ userId: req.user.id, workspaceId: monitor.workspaceId, action: 'monitor.create', targetType: 'Monitor', targetId: monitor.id, ip: requestIp(req), metadata: { name: monitor.name, monitorType: monitor.monitorType } });
       res.json(monitor);
@@ -1728,7 +1742,7 @@ async function startServer() {
 
   app.get('/api/monitors/:id', authenticateToken, async (req: any, res) => {
     try {
-      const monitor = await prisma.monitor.findUnique({ where: { id: req.params.id } });
+      const monitor = await prisma.monitor.findUnique({ where: { id: req.params.id }, include: { tags: { select: { id: true, name: true, color: true } } } });
       if (!monitor) return res.status(404).json({ error: 'Not found' });
       
       const ws = await checkWorkspaceAccess(monitor.workspaceId, req.user.id);
@@ -1759,7 +1773,15 @@ async function startServer() {
       if (parsed.data.groupId && !(await groupInWorkspace(parsed.data.groupId, existing.workspaceId))) {
         return res.status(400).json({ error: 'Group does not belong to this workspace' });
       }
-      const monitor = await prisma.monitor.update({ where: { id: req.params.id }, data: parsed.data });
+      const { tagIds, ...updateData } = parsed.data as any;
+      if (tagIds?.length && (await prisma.tag.count({ where: { id: { in: tagIds }, workspaceId: existing.workspaceId } })) !== new Set(tagIds).size) {
+        return res.status(400).json({ error: 'One or more tags do not belong to this workspace' });
+      }
+      const monitor = await prisma.monitor.update({
+        where: { id: req.params.id },
+        data: { ...updateData, ...(tagIds ? { tags: { set: tagIds.map((id: string) => ({ id })) } } : {}) },
+        include: { tags: { select: { id: true, name: true, color: true } } }
+      });
       emitMonitorUpdated(monitor);
       // customHeaders kullanicinin yazdigi ham JSON'dur ve siklikla
       // "Authorization: Bearer ..." icerir; kalici audit kaydina acik metin
@@ -1904,8 +1926,10 @@ async function startServer() {
       const logEntry = await prisma.pingLog.create({ data: { monitorId: monitor.id, status: 1, responseTime: 0, statusCode: 200 } });
       const updated = await prisma.monitor.update({ where: { id: monitor.id }, data: { lastChecked: new Date(), currentStatus: 'up', incidentActive: false, consecutiveFailures: 0 } });
       
-      if (monitor.currentStatus !== 'up' && !memberAlertsSuppressed(monitor)) {
-        await dispatchNotification(monitor, monitor.workspace, 'up', 'Heartbeat received');
+      // Yalnizca "heartbeat gelmedi" olayindan donuste toparlanma bildirilir
+      // (onceden bakimdan cikista da "toparlandi" gidiyordu).
+      if (monitor.currentStatus === 'down' && !memberAlertsSuppressed(monitor)) {
+        await notify({ workspace: monitor.workspace, event: 'up', monitor, reason: 'Heartbeat received', ctx: { recoveredFrom: 'heartbeat_missed' } });
       }
       
       emitPingLog(logEntry, monitor.workspaceId);
@@ -2301,85 +2325,600 @@ async function startServer() {
     }
   });
 
-  // --- NOTIFICATION ENGINE ---
-  async function dispatchNotification(monitor: any, workspace: any, type: 'up' | 'down' | 'degraded' | 'ssl_expiry', reason?: string) {
-    let statusText = '🚨 INCIDENT ALERT';
-    if (type === 'up') statusText = '✅ RECOVERED';
-    if (type === 'degraded') statusText = '⚠️ PERFORMANCE DEGRADATION';
-    if (type === 'ssl_expiry') statusText = '🔒 SSL CERTIFICATE EXPIRING';
-    // `monitor` burada duck-typed: gercek bir monitor ya da lib/composite
-    // uzerinden gelen grup-bildirimi nesnesi olabilir. Grup nesnesinde url
-    // bulunmadigi icin satir kosullu yazilir.
-    const message = `${statusText}\nMonitor: ${monitor.name}\n${monitor.url ? `URL: ${monitor.url}\n` : ''}${reason ? `Reason: ${reason}\n` : ''}Time: ${new Date().toISOString()}`;
+  // ═══ MERKEZI BILDIRIM YONETIMI: API ═══════════════════════════════════════
+  // Yetki: workspace sahibi ve ADMIN rolundeki uyeler her seyi yonetir. MEMBER
+  // rolundekiler her seyi gorur, ama yalnizca uyesi olduklari ekiplerin kanal ve
+  // kurallarini duzenleyebilir (lib/notifications.ts canManageNotificationItem).
+  const actorFor = async (workspaceId: string, userId: string): Promise<(Actor & { role: string; isOwner: boolean }) | null> => {
+    const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { userId: true, members: { where: { userId }, select: { role: true } } } });
+    if (!ws) return null;
+    const isOwner = ws.userId === userId;
+    const member = ws.members[0];
+    if (!isOwner && !member) return null;
+    const isAdmin = isOwner || member?.role !== 'MEMBER';
+    const teams = await prisma.teamMember.findMany({ where: { userId, team: { workspaceId } }, select: { teamId: true } });
+    return { isOwner, isAdmin, role: isOwner ? 'OWNER' : (member?.role === 'MEMBER' ? 'MEMBER' : 'ADMIN'), teamIds: teams.map((t: any) => t.teamId) };
+  };
 
-    const dispatchers: Promise<any>[] = [];
+  const countInWorkspace = async (model: any, ids: string[] | undefined, workspaceId: string) =>
+    !ids || ids.length === 0 || (await model.count({ where: { id: { in: ids }, workspaceId } })) === new Set(ids).size;
 
-    // Telegram
-    const botToken = workspace?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN;
-    if (monitor.telegramChatId && botToken) {
-      dispatchers.push(axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, { chat_id: monitor.telegramChatId, text: message }, { timeout: 10000 }).then(() => log(`DEBUG: Telegram sent for ${monitor.name}`)).catch((e: any) => log(`DEBUG: Telegram failed: ${e.message}`)));
-    }
-    // Slack
-    if (monitor.slackWebhook) {
-      dispatchers.push(postWebhook(monitor.slackWebhook, { text: message }).catch((e: any) => log(`DEBUG: Slack failed: ${e.message}`)));
-    }
-    // Zoom
-    if (monitor.zoomWebhook) {
-      dispatchers.push(postWebhook(monitor.zoomWebhook, { is_markdown_support: true, content: { head: { text: statusText }, body: [{ type: 'message', text: message }] } }).catch((e: any) => log(`DEBUG: Zoom failed: ${e.message}`)));
-    }
-    // Discord
-    if (monitor.discordWebhook) {
-      dispatchers.push(postWebhook(monitor.discordWebhook, { content: message }).catch((e: any) => log(`DEBUG: Discord failed: ${e.message}`)));
-    }
-    // Microsoft Teams
-    if (monitor.teamsWebhook) {
-      dispatchers.push(postWebhook(monitor.teamsWebhook, { text: message }).catch((e: any) => log(`DEBUG: Teams failed: ${e.message}`)));
-    }
-    // Generic Webhook
-    if (monitor.genericWebhook) {
-      dispatchers.push(postWebhook(monitor.genericWebhook, { monitor: monitor.name, url: monitor.url, status: type, reason, timestamp: new Date().toISOString() }).catch((e: any) => log(`DEBUG: Generic webhook failed: ${e.message}`)));
-    }
-    // Email
-    if (monitor.alertEmail && workspace?.smtpHost && workspace?.smtpUser && workspace?.smtpPass) {
-      dispatchers.push((async () => {
-        try {
-          const transporter = nodemailer.createTransport({ host: workspace.smtpHost, port: workspace.smtpPort || 587, secure: workspace.smtpPort === 465, auth: { user: workspace.smtpUser, pass: workspace.smtpPass } });
-          await transporter.sendMail({ from: workspace.smtpFrom || workspace.smtpUser, to: monitor.alertEmail, subject: `${statusText}: ${monitor.name}`, text: message });
-          log(`DEBUG: Email sent for ${monitor.name}`);
-        } catch (e: any) { log(`DEBUG: Email failed: ${e.message}`); }
-      })());
-    }
+  const channelView = (c: any, actor: Actor) => {
+    const canManage = canManageNotificationItem(actor, c.teamId);
+    let config: any = undefined;
+    // Webhook adresleri gizli bilgi sayilir: yalnizca duzenleyebilenler gorur.
+    if (canManage) { try { config = JSON.parse(c.config); } catch { config = {}; } }
+    return {
+      id: c.id, name: c.name, type: c.type, teamId: c.teamId, enabled: c.enabled,
+      lastTestAt: c.lastTestAt, lastTestOk: c.lastTestOk, lastError: c.lastError,
+      ruleCount: c._count?.rules ?? undefined, config, canManage
+    };
+  };
+  const ruleView = (r: any, actor: Actor) => ({
+    id: r.id, name: r.name, teamId: r.teamId, enabled: r.enabled, events: r.events, allMonitors: r.allMonitors,
+    monitorIds: r.monitors.map((x: any) => x.id), groupIds: r.groups.map((x: any) => x.id),
+    tagIds: r.tags.map((x: any) => x.id), channelIds: r.channels.map((x: any) => x.id),
+    canManage: canManageNotificationItem(actor, r.teamId)
+  });
 
-    await Promise.allSettled(dispatchers);
+  // Bildirimler sayfasi icin tek istek: yetki, ekipler, etiketler, kapsam
+  // secenekleri, kanallar, kurallar.
+  app.get('/api/notifications/bootstrap', authenticateToken, async (req: any, res) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+      const actor = await actorFor(workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      await ensureLegacyMigrated(workspaceId).catch(() => {});
+
+      const [ws, teams, tags, groups, monitors, channels, rules] = await Promise.all([
+        prisma.workspace.findUnique({ where: { id: workspaceId }, include: { user: { select: { id: true, name: true, email: true } }, members: { include: { user: { select: { id: true, name: true, email: true } } } } } }),
+        prisma.team.findMany({ where: { workspaceId }, include: { members: { select: { userId: true } } }, orderBy: { name: 'asc' } }),
+        prisma.tag.findMany({ where: { workspaceId }, include: { _count: { select: { monitors: true } } }, orderBy: { name: 'asc' } }),
+        prisma.monitorGroup.findMany({ where: { workspaceId }, select: { id: true, name: true, color: true }, orderBy: { order: 'asc' } }),
+        prisma.monitor.findMany({ where: { workspaceId }, select: { id: true, name: true, groupId: true, tags: { select: { id: true } } }, orderBy: { name: 'asc' } }),
+        prisma.notificationChannel.findMany({ where: { workspaceId }, include: { _count: { select: { rules: true } } }, orderBy: { createdAt: 'asc' } }),
+        prisma.notificationRule.findMany({ where: { workspaceId }, include: RULE_INCLUDE, orderBy: { createdAt: 'asc' } })
+      ]);
+      const people = ws ? [
+        { userId: ws.user.id, name: ws.user.name, email: ws.user.email, role: 'OWNER' },
+        ...ws.members.map((m: any) => ({ userId: m.user.id, name: m.user.name, email: m.user.email, role: m.role === 'MEMBER' ? 'MEMBER' : 'ADMIN' }))
+      ] : [];
+      res.json({
+        actor: { role: actor.role, isAdmin: actor.isAdmin, teamIds: actor.teamIds },
+        events: NOTIFICATION_EVENTS, channelTypes: CHANNEL_TYPES,
+        people,
+        teams: teams.map((t: any) => ({ id: t.id, name: t.name, color: t.color, memberIds: t.members.map((m: any) => m.userId) })),
+        tags: tags.map((t: any) => ({ id: t.id, name: t.name, color: t.color, monitorCount: t._count.monitors })),
+        groups,
+        monitors: monitors.map((m: any) => ({ id: m.id, name: m.name, groupId: m.groupId, tagIds: m.tags.map((t: any) => t.id) })),
+        channels: channels.map((c: any) => channelView(c, actor)),
+        rules: rules.map((r: any) => ruleView(r, actor))
+      });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- Kanallar ---
+  app.post('/api/notification-channels', authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = channelCreateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { workspaceId, teamId, name, type, config, enabled } = parsed.data;
+      const actor = await actorFor(workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      if (!canManageNotificationItem(actor, teamId)) return res.status(403).json({ error: 'You can only manage your own team’s channels' });
+      if (teamId && !(await countInWorkspace(prisma.team, [teamId], workspaceId))) return res.status(400).json({ error: 'Team not found' });
+      const cfg = parseChannelConfig(type, config);
+      if (!cfg.ok) return res.status(400).json({ error: cfg.error });
+      const ch = await prisma.notificationChannel.create({ data: { workspaceId, teamId: teamId || null, name, type, config: JSON.stringify(cfg.value!), enabled: enabled ?? true } });
+      await logAudit({ userId: req.user.id, workspaceId, action: 'notification.channel.create', targetType: 'NotificationChannel', targetId: ch.id, ip: requestIp(req), metadata: { name, type } });
+      res.status(201).json(channelView(ch, actor));
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  app.put('/api/notification-channels/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.notificationChannel.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      if (!canManageNotificationItem(actor, existing.teamId)) return res.status(403).json({ error: 'You can only manage your own team’s channels' });
+      const parsed = channelUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { teamId, name, config, enabled } = parsed.data;
+      if (teamId !== undefined && !canManageNotificationItem(actor, teamId)) return res.status(403).json({ error: 'You can only assign channels to your own teams' });
+      if (teamId && !(await countInWorkspace(prisma.team, [teamId], existing.workspaceId))) return res.status(400).json({ error: 'Team not found' });
+      const data: any = {};
+      if (name !== undefined) data.name = name;
+      if (enabled !== undefined) data.enabled = enabled;
+      if (teamId !== undefined) data.teamId = teamId || null;
+      if (config !== undefined) {
+        const cfg = parseChannelConfig(existing.type, config);
+        if (!cfg.ok) return res.status(400).json({ error: cfg.error });
+        data.config = JSON.stringify(cfg.value!);
+        data.lastTestOk = null; data.lastError = null; data.lastTestAt = null;
+      }
+      const ch = await prisma.notificationChannel.update({ where: { id: existing.id }, data, include: { _count: { select: { rules: true } } } });
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'notification.channel.update', targetType: 'NotificationChannel', targetId: ch.id, ip: requestIp(req), metadata: { name: ch.name, configChanged: config !== undefined } });
+      res.json(channelView(ch, actor));
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  app.delete('/api/notification-channels/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.notificationChannel.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor || !canManageNotificationItem(actor, existing.teamId)) return res.status(403).json({ error: 'Forbidden' });
+      await prisma.notificationChannel.delete({ where: { id: existing.id } });
+      invalidateRules(existing.workspaceId);
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'notification.channel.delete', targetType: 'NotificationChannel', targetId: existing.id, ip: requestIp(req), metadata: { name: existing.name } });
+      res.json({ success: true });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // Test gonderimi: adres yanlissa kesinti aninda degil kurulumda anlasilsin.
+  const channelTestLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
+  app.post('/api/notification-channels/:id/test', authenticateToken, channelTestLimiter, async (req: any, res) => {
+    try {
+      const ch = await prisma.notificationChannel.findUnique({ where: { id: req.params.id }, include: { workspace: true } });
+      if (!ch) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(ch.workspaceId, req.user.id);
+      if (!actor || !canManageNotificationItem(actor, ch.teamId)) return res.status(403).json({ error: 'Forbidden' });
+      let ok = true; let error: string | null = null;
+      try { await sendToChannel(ch, ch.workspace, 'test', ch.name, { reason: 'Eyeon.site test' }); }
+      catch (e: any) { ok = false; error = String(e?.message || e).slice(0, 500); }
+      await prisma.notificationChannel.update({ where: { id: ch.id }, data: { lastTestAt: new Date(), lastTestOk: ok, lastError: error } });
+      await prisma.notificationLog.create({ data: { workspaceId: ch.workspaceId, channelId: ch.id, channelName: ch.name, subject: ch.name, event: 'test', success: ok, error } }).catch(() => {});
+      res.json({ ok, error });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- Kurallar ---
+  // Kural yalnizca kendi workspace'indeki kayitlara baglanabilir. Uye, kurala
+  // yalnizca kendi ekiplerinin ya da workspace genelindeki kanallari ekleyebilir.
+  const validateRuleRefs = async (workspaceId: string, actor: Actor, d: any): Promise<string | null> => {
+    if (d.teamId && !(await countInWorkspace(prisma.team, [d.teamId], workspaceId))) return 'Team not found';
+    if (!(await countInWorkspace(prisma.monitor, d.monitorIds, workspaceId))) return 'One or more monitors do not belong to this workspace';
+    if (!(await countInWorkspace(prisma.monitorGroup, d.groupIds, workspaceId))) return 'One or more groups do not belong to this workspace';
+    if (!(await countInWorkspace(prisma.tag, d.tagIds, workspaceId))) return 'One or more tags do not belong to this workspace';
+    if (d.channelIds) {
+      const chans = await prisma.notificationChannel.findMany({ where: { id: { in: d.channelIds }, workspaceId }, select: { teamId: true } });
+      if (chans.length !== new Set(d.channelIds).size) return 'One or more channels do not belong to this workspace';
+      if (!actor.isAdmin && chans.some((c: any) => c.teamId && !actor.teamIds.includes(c.teamId))) return 'You can only use your own team’s channels';
+    }
+    return null;
+  };
+  const ruleRelations = (d: any, mode: 'connect' | 'set') => ({
+    ...(d.monitorIds ? { monitors: { [mode]: d.monitorIds.map((id: string) => ({ id })) } } : {}),
+    ...(d.groupIds ? { groups: { [mode]: d.groupIds.map((id: string) => ({ id })) } } : {}),
+    ...(d.tagIds ? { tags: { [mode]: d.tagIds.map((id: string) => ({ id })) } } : {}),
+    ...(d.channelIds ? { channels: { [mode]: d.channelIds.map((id: string) => ({ id })) } } : {})
+  });
+
+  app.post('/api/notification-rules', authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = ruleCreateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const d = parsed.data;
+      const actor = await actorFor(d.workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      if (!canManageNotificationItem(actor, d.teamId)) return res.status(403).json({ error: 'You can only manage your own team’s rules' });
+      const refError = await validateRuleRefs(d.workspaceId, actor, d);
+      if (refError) return res.status(400).json({ error: refError });
+      const rule = await prisma.notificationRule.create({
+        data: { workspaceId: d.workspaceId, teamId: d.teamId || null, name: d.name, enabled: d.enabled ?? true, events: d.events, allMonitors: !!d.allMonitors, ...ruleRelations(d, 'connect') },
+        include: RULE_INCLUDE
+      });
+      invalidateRules(d.workspaceId);
+      await logAudit({ userId: req.user.id, workspaceId: d.workspaceId, action: 'notification.rule.create', targetType: 'NotificationRule', targetId: rule.id, ip: requestIp(req), metadata: { name: d.name } });
+      res.status(201).json(ruleView(rule, actor));
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  app.put('/api/notification-rules/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.notificationRule.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      if (!canManageNotificationItem(actor, existing.teamId)) return res.status(403).json({ error: 'You can only manage your own team’s rules' });
+      const parsed = ruleUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const d: any = parsed.data;
+      if (d.teamId !== undefined && !canManageNotificationItem(actor, d.teamId)) return res.status(403).json({ error: 'You can only assign rules to your own teams' });
+      const refError = await validateRuleRefs(existing.workspaceId, actor, d);
+      if (refError) return res.status(400).json({ error: refError });
+      const data: any = { ...ruleRelations(d, 'set') };
+      for (const k of ['name', 'enabled', 'events', 'allMonitors']) if (d[k] !== undefined) data[k] = d[k];
+      if (d.teamId !== undefined) data.teamId = d.teamId || null;
+      const rule = await prisma.notificationRule.update({ where: { id: existing.id }, data, include: RULE_INCLUDE });
+      invalidateRules(existing.workspaceId);
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'notification.rule.update', targetType: 'NotificationRule', targetId: rule.id, ip: requestIp(req), metadata: { name: rule.name } });
+      res.json(ruleView(rule, actor));
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  app.delete('/api/notification-rules/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.notificationRule.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor || !canManageNotificationItem(actor, existing.teamId)) return res.status(403).json({ error: 'Forbidden' });
+      await prisma.notificationRule.delete({ where: { id: existing.id } });
+      invalidateRules(existing.workspaceId);
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'notification.rule.delete', targetType: 'NotificationRule', targetId: existing.id, ip: requestIp(req), metadata: { name: existing.name } });
+      res.json({ success: true });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- Gonderim gecmisi ---
+  app.get('/api/notification-logs', authenticateToken, async (req: any, res) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+      const actor = await actorFor(workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      const take = Math.min(parseInt(req.query.limit as string) || 100, 500);
+      const logs = await prisma.notificationLog.findMany({
+        where: { workspaceId, ...(req.query.failed === '1' ? { success: false } : {}) },
+        orderBy: { createdAt: 'desc' }, take
+      });
+      res.json(logs);
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- Ekipler (yalnizca yonetici) ---
+  const validTeamMembers = async (workspaceId: string, userIds: string[] | undefined) => {
+    if (!userIds || userIds.length === 0) return true;
+    const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { userId: true, members: { select: { userId: true } } } });
+    const allowed = new Set([ws?.userId, ...(ws?.members || []).map((m: any) => m.userId)]);
+    return userIds.every(id => allowed.has(id));
+  };
+
+  app.post('/api/teams', authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = teamCreateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { workspaceId, name, color, memberIds } = parsed.data;
+      const actor = await actorFor(workspaceId, req.user.id);
+      if (!actor?.isAdmin) return res.status(403).json({ error: 'Only workspace admins can manage teams' });
+      if (!(await validTeamMembers(workspaceId, memberIds))) return res.status(400).json({ error: 'Team members must belong to this workspace' });
+      const team = await prisma.team.create({
+        data: { workspaceId, name, ...(color ? { color } : {}), members: { create: [...new Set(memberIds || [])].map(userId => ({ userId })) } },
+        include: { members: { select: { userId: true } } }
+      });
+      await logAudit({ userId: req.user.id, workspaceId, action: 'team.create', targetType: 'Team', targetId: team.id, ip: requestIp(req), metadata: { name } });
+      res.status(201).json({ id: team.id, name: team.name, color: team.color, memberIds: team.members.map((m: any) => m.userId) });
+    } catch (e: any) {
+      if (e.code === 'P2002') return res.status(400).json({ error: 'A team with this name already exists' });
+      serverError(res, e);
+    }
+  });
+
+  app.put('/api/teams/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.team.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor?.isAdmin) return res.status(403).json({ error: 'Only workspace admins can manage teams' });
+      const parsed = teamUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { name, color, memberIds } = parsed.data;
+      if (!(await validTeamMembers(existing.workspaceId, memberIds))) return res.status(400).json({ error: 'Team members must belong to this workspace' });
+      const team = await prisma.$transaction(async (tx: any) => {
+        if (memberIds) {
+          await tx.teamMember.deleteMany({ where: { teamId: existing.id } });
+          if (memberIds.length) await tx.teamMember.createMany({ data: [...new Set(memberIds)].map(userId => ({ teamId: existing.id, userId })) });
+        }
+        return tx.team.update({ where: { id: existing.id }, data: { ...(name ? { name } : {}), ...(color ? { color } : {}) }, include: { members: { select: { userId: true } } } });
+      });
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'team.update', targetType: 'Team', targetId: team.id, ip: requestIp(req), metadata: { name: team.name, membersChanged: !!memberIds } });
+      res.json({ id: team.id, name: team.name, color: team.color, memberIds: team.members.map((m: any) => m.userId) });
+    } catch (e: any) {
+      if (e.code === 'P2002') return res.status(400).json({ error: 'A team with this name already exists' });
+      serverError(res, e);
+    }
+  });
+
+  app.delete('/api/teams/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.team.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor?.isAdmin) return res.status(403).json({ error: 'Only workspace admins can manage teams' });
+      // Ekibin kanal ve kurallari silinmez; workspace geneline (yalnizca
+      // yoneticilerin duzenleyebildigi) duser.
+      await prisma.team.delete({ where: { id: existing.id } });
+      invalidateRules(existing.workspaceId);
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'team.delete', targetType: 'Team', targetId: existing.id, ip: requestIp(req), metadata: { name: existing.name } });
+      res.json({ success: true });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- Etiketler ---
+  app.get('/api/tags', authenticateToken, async (req: any, res) => {
+    try {
+      const workspaceId = req.query.workspaceId as string;
+      if (!workspaceId) return res.status(400).json({ error: 'Workspace ID required' });
+      const actor = await actorFor(workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      const tags = await prisma.tag.findMany({ where: { workspaceId }, include: { _count: { select: { monitors: true } } }, orderBy: { name: 'asc' } });
+      res.json(tags.map((t: any) => ({ id: t.id, name: t.name, color: t.color, monitorCount: t._count.monitors })));
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // Etiketin monitorlerini toplu ayarla (Bildirimler > Etiketler). Monitorleri
+  // duzenlemek workspace'in her uyesine acik oldugu icin bu da oyle.
+  app.put('/api/tags/:id/monitors', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.tag.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      const ids = req.body?.monitorIds;
+      if (!Array.isArray(ids) || ids.length > 5000 || ids.some((x: any) => typeof x !== 'string')) return res.status(400).json({ error: 'monitorIds: Invalid list' });
+      if (!(await countInWorkspace(prisma.monitor, ids, existing.workspaceId))) return res.status(400).json({ error: 'One or more monitors do not belong to this workspace' });
+      await prisma.tag.update({ where: { id: existing.id }, data: { monitors: { set: ids.map((id: string) => ({ id })) } } });
+      res.json({ id: existing.id, monitorCount: new Set(ids).size });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  app.post('/api/tags', authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = tagCreateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { workspaceId, name, color } = parsed.data;
+      const actor = await actorFor(workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      const tag = await prisma.tag.create({ data: { workspaceId, name, ...(color ? { color } : {}) } });
+      res.status(201).json({ id: tag.id, name: tag.name, color: tag.color, monitorCount: 0 });
+    } catch (e: any) {
+      if (e.code === 'P2002') return res.status(400).json({ error: 'A tag with this name already exists' });
+      serverError(res, e);
+    }
+  });
+
+  app.put('/api/tags/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.tag.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor?.isAdmin) return res.status(403).json({ error: 'Only workspace admins can edit tags' });
+      const parsed = tagUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const tag = await prisma.tag.update({ where: { id: existing.id }, data: parsed.data });
+      res.json({ id: tag.id, name: tag.name, color: tag.color });
+    } catch (e: any) {
+      if (e.code === 'P2002') return res.status(400).json({ error: 'A tag with this name already exists' });
+      serverError(res, e);
+    }
+  });
+
+  app.delete('/api/tags/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const existing = await prisma.tag.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(existing.workspaceId, req.user.id);
+      if (!actor?.isAdmin) return res.status(403).json({ error: 'Only workspace admins can delete tags' });
+      await prisma.tag.delete({ where: { id: existing.id } });
+      invalidateRules(existing.workspaceId);
+      await logAudit({ userId: req.user.id, workspaceId: existing.workspaceId, action: 'tag.delete', targetType: 'Tag', targetId: existing.id, ip: requestIp(req), metadata: { name: existing.name } });
+      res.json({ success: true });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- Uye rolu (yalnizca sahip) ---
+  app.put('/api/workspaces/:id/members/:memberId/role', authenticateToken, async (req: any, res) => {
+    try {
+      const ws = await prisma.workspace.findUnique({ where: { id: req.params.id } });
+      if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+      if (ws.userId !== req.user.id) return res.status(403).json({ error: 'Only the workspace owner can manage members' });
+      const parsed = memberRoleSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const member = await prisma.workspaceMember.findUnique({ where: { id: req.params.memberId } });
+      if (!member || member.workspaceId !== ws.id) return res.status(404).json({ error: 'Member not found' });
+      const updated = await prisma.workspaceMember.update({ where: { id: member.id }, data: { role: parsed.data.role } });
+      await logAudit({ userId: req.user.id, workspaceId: ws.id, action: 'workspace.member.role', targetType: 'User', targetId: member.userId, ip: requestIp(req), metadata: { role: parsed.data.role } });
+      res.json({ memberId: updated.id, role: updated.role });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- Monitorun bildirim rotasi: "bu monitor duserse kim duyar?" ---
+  app.get('/api/monitors/:id/notification-routes', authenticateToken, async (req: any, res) => {
+    try {
+      const monitor = await prisma.monitor.findUnique({ where: { id: req.params.id }, include: { tags: { select: { id: true } }, group: { select: { id: true, name: true, compositeEnabled: true, suppressMemberAlerts: true } } } });
+      if (!monitor) return res.status(404).json({ error: 'Not found' });
+      const actor = await actorFor(monitor.workspaceId, req.user.id);
+      if (!actor) return res.status(403).json({ error: 'Forbidden' });
+      await ensureLegacyMigrated(monitor.workspaceId).catch(() => {});
+      const rules = await prisma.notificationRule.findMany({ where: { workspaceId: monitor.workspaceId }, include: { ...RULE_INCLUDE, team: { select: { id: true, name: true } } } });
+      const like = { id: monitor.id, groupId: monitor.groupId, tagIds: monitor.tags.map((t: any) => t.id) };
+      const channelIds = new Set<string>();
+      const routes = rules
+        .filter((r: any) => r.enabled)
+        .map((r: any) => {
+          const rl = toRuleLike(r);
+          const monitorEvents = r.events.filter((e: string) => !e.startsWith('location_'));
+          const locationEvents = r.events.filter((e: string) => e.startsWith('location_'));
+          const coversMonitor = monitorEvents.length > 0 && matchingRules([rl], monitorEvents[0] as NotificationEvent, { monitor: like }).length > 0;
+          const coversLocation = !!monitor.groupId && locationEvents.length > 0 && matchingRules([rl], locationEvents[0] as NotificationEvent, { groupId: monitor.groupId }).length > 0;
+          if (!coversMonitor && !coversLocation) return null;
+          r.channels.forEach((c: any) => channelIds.add(c.id));
+          return { id: r.id, name: r.name, team: r.team, events: [...(coversMonitor ? monitorEvents : []), ...(coversLocation ? locationEvents : [])], channelIds: r.channels.map((c: any) => c.id) };
+        })
+        .filter(Boolean);
+      const channels = await prisma.notificationChannel.findMany({ where: { id: { in: [...channelIds] } }, select: { id: true, name: true, type: true, enabled: true } });
+      res.json({ routes, channels, memberAlertsSuppressed: memberAlertsSuppressed(monitor) });
+    } catch (e: any) { serverError(res, e); }
+  });
+
+  // --- NOTIFICATION ENGINE (merkezi bildirim yonetimi) ---
+  // Olay -> kapsayan kurallar -> kanallar (tekrarsiz) -> gonderim -> gecmis.
+  // Eslestirme mantigi lib/notifications.ts'te saf fonksiyonlar halinde ve
+  // testlidir. Onceden adresler her monitorde ayri alanlarda tutuluyordu.
+  const RULE_INCLUDE = {
+    monitors: { select: { id: true } }, groups: { select: { id: true } },
+    tags: { select: { id: true } }, channels: { select: { id: true } }
+  } as const;
+  const toRuleLike = (r: any): RuleLike => ({
+    id: r.id, enabled: r.enabled, events: r.events || [], allMonitors: r.allMonitors,
+    monitorIds: r.monitors.map((x: any) => x.id), groupIds: r.groups.map((x: any) => x.id),
+    tagIds: r.tags.map((x: any) => x.id), channelIds: r.channels.map((x: any) => x.id)
+  });
+  // Kurallar seyrek degisir, olaylar sik gelir: workspace basina 30 sn onbellek.
+  const ruleCache = new Map<string, { at: number; rules: RuleLike[] }>();
+  const invalidateRules = (workspaceId: string) => ruleCache.delete(workspaceId);
+  async function rulesFor(workspaceId: string): Promise<RuleLike[]> {
+    const hit = ruleCache.get(workspaceId);
+    if (hit && Date.now() - hit.at < 30_000) return hit.rules;
+    const rules = (await prisma.notificationRule.findMany({ where: { workspaceId }, include: RULE_INCLUDE })).map(toRuleLike);
+    ruleCache.set(workspaceId, { at: Date.now(), rules });
+    return rules;
+  }
+
+  // E-posta: workspace'in kendi SMTP'si tanimliysa o, degilse sistem SMTP'si.
+  // Onceden yalnizca workspace SMTP'si kullaniliyordu; tanimli degilse e-posta
+  // bildirimleri sessizce hic gitmiyordu.
+  function mailTransportFor(workspace: any) {
+    if (workspace?.smtpHost && workspace?.smtpUser && workspace?.smtpPass) {
+      const port = workspace.smtpPort || 587;
+      return { transporter: nodemailer.createTransport({ host: workspace.smtpHost, port, secure: port === 465, auth: { user: workspace.smtpUser, pass: workspace.smtpPass } }), from: workspace.smtpFrom || workspace.smtpUser };
+    }
+    if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+      const port = parseInt(process.env.SMTP_PORT || '587');
+      return { transporter: nodemailer.createTransport({ host: process.env.SMTP_HOST, port, secure: port === 465, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } }), from: process.env.SMTP_FROM || process.env.SMTP_USER };
+    }
+    return null;
+  }
+
+  /** Tek bir kanala gonderir; basarisizlikta hata firlatir. */
+  async function sendToChannel(channel: any, workspace: any, event: NotificationEvent | 'test', subject: string, opts: { url?: string | null; reason?: string | null } = {}) {
+    let config: any = {};
+    try { config = JSON.parse(channel.config || '{}'); } catch { throw new Error('Channel configuration is corrupt'); }
+    const title = eventTitle(event);
+    const message = formatMessage(event, subject, opts);
+    switch (channel.type) {
+      case 'email': {
+        const mail = mailTransportFor(workspace);
+        if (!mail) throw new Error('SMTP is not configured');
+        await mail.transporter.sendMail({ from: mail.from, to: emailRecipients(config.to || '').join(', '), subject: `${title}: ${subject}`, text: message });
+        return;
+      }
+      case 'telegram': {
+        const botToken = workspace?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN;
+        if (!botToken) throw new Error('Telegram bot token is not configured');
+        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, { chat_id: config.chatId, text: message }, { timeout: 10000 });
+        return;
+      }
+      case 'slack': await postWebhook(config.url, { text: message }); return;
+      case 'teams': await postWebhook(config.url, { text: message }); return;
+      case 'discord': await postWebhook(config.url, { content: message }); return;
+      case 'zoom': await postWebhook(config.url, { is_markdown_support: true, content: { head: { text: title }, body: [{ type: 'message', text: message }] } }); return;
+      case 'webhook': await postWebhook(config.url, { event, subject, url: opts.url || null, reason: opts.reason || null, timestamp: new Date().toISOString() }); return;
+      default: throw new Error(`Unknown channel type: ${channel.type}`);
+    }
+  }
+
+  /**
+   * Bir olayi ilgili kurallarin kanallarina iletir ve gecmise yazar.
+   * monitor: monitor olaylari icin (down/degraded/up/ssl_expiry/heartbeat_missed)
+   * group  : lokasyon olaylari icin (location_*)
+   */
+  async function notify(params: {
+    workspace: any; event: NotificationEvent; monitor?: any; group?: { id: string; name: string };
+    reason?: string | null; ctx?: MatchContext;
+  }) {
+    const { workspace, event, monitor, group, reason, ctx } = params;
+    const workspaceId = workspace?.id || monitor?.workspaceId;
+    if (!workspaceId) return;
+    try {
+      await ensureLegacyMigrated(workspaceId);
+      const rules = await rulesFor(workspaceId);
+      let target: any = {};
+      if (group) target = { groupId: group.id };
+      else if (monitor) {
+        const tags = await prisma.monitor.findUnique({ where: { id: monitor.id }, select: { tags: { select: { id: true } } } });
+        target = { monitor: { id: monitor.id, groupId: monitor.groupId, tagIds: (tags?.tags || []).map((t: any) => t.id) } };
+      }
+      const pairs = channelsForRules(matchingRules(rules, event, target, ctx));
+      if (pairs.length === 0) return;
+      const channels = await prisma.notificationChannel.findMany({ where: { id: { in: pairs.map(p => p.channelId) }, workspaceId, enabled: true } });
+      const subject = group ? group.name : monitor?.name || '';
+      await Promise.allSettled(channels.map(async (ch: any) => {
+        const ruleId = pairs.find(p => p.channelId === ch.id)?.ruleId || null;
+        let success = true; let error: string | null = null;
+        try { await sendToChannel(ch, workspace, event, subject, { url: monitor?.url, reason }); }
+        catch (e: any) { success = false; error = String(e?.message || e).slice(0, 500); log(`DEBUG: Notification failed (${ch.type} "${ch.name}"): ${error}`); }
+        await prisma.notificationLog.create({
+          data: { workspaceId, ruleId, channelId: ch.id, monitorId: monitor?.id || null, groupId: group?.id || null, subject, channelName: ch.name, event, success, error }
+        }).catch(() => {});
+      }));
+    } catch (e: any) {
+      log(`DEBUG: notify(${event}) failed: ${e.message}`);
+    }
+  }
+
+  // --- Eski bildirim ayarlarinin bir kerelik tasinmasi ---
+  // Monitorlerdeki alertEmail/slackWebhook/... ve lokasyonlardaki
+  // degradedChannels/downChannels, ilk acilista kanal + kurala donusturulur.
+  // Workspace.notificationsMigratedAt "kilit" olarak once yazilir; ayni anda
+  // iki tasima calismaz. Hata olursa kilit geri alinir.
+  const migratedWorkspaces = new Set<string>();
+  async function ensureLegacyMigrated(workspaceId: string) {
+    if (migratedWorkspaces.has(workspaceId)) return;
+    const claimed = await prisma.workspace.updateMany({ where: { id: workspaceId, notificationsMigratedAt: null }, data: { notificationsMigratedAt: new Date() } });
+    if (claimed.count === 0) { migratedWorkspaces.add(workspaceId); return; }
+    try {
+      const [monitors, groups] = await Promise.all([
+        prisma.monitor.findMany({ where: { workspaceId } }),
+        prisma.monitorGroup.findMany({ where: { workspaceId }, select: { id: true, name: true, compositeEnabled: true, degradedChannels: true, downChannels: true } })
+      ]);
+      const plan = planLegacyMigration(monitors as any, groups as any);
+      if (plan.channels.length > 0) {
+        await prisma.$transaction(async (tx: any) => {
+          const idByKey = new Map<string, string>();
+          for (const c of plan.channels) {
+            const created = await tx.notificationChannel.create({ data: { workspaceId, name: c.name, type: c.type, config: JSON.stringify(c.config) } });
+            idByKey.set(c.key, created.id);
+          }
+          for (const r of plan.rules) {
+            await tx.notificationRule.create({
+              data: {
+                workspaceId, name: r.name, events: r.events,
+                monitors: { connect: r.monitorIds.map(id => ({ id })) },
+                groups: { connect: r.groupIds.map(id => ({ id })) },
+                channels: { connect: r.channelKeys.map(k => ({ id: idByKey.get(k)! })) }
+              }
+            });
+          }
+        });
+        log(`DEBUG: Migrated legacy notification settings for workspace ${workspaceId}: ${plan.channels.length} channels, ${plan.rules.length} rules`);
+      }
+      invalidateRules(workspaceId);
+      migratedWorkspaces.add(workspaceId);
+    } catch (e: any) {
+      await prisma.workspace.update({ where: { id: workspaceId }, data: { notificationsMigratedAt: null } }).catch(() => {});
+      log(`ERROR: Legacy notification migration failed for workspace ${workspaceId}: ${e.message}`);
+      throw e;
+    }
   }
 
   // --- Faz 3.5: LOKASYON (COMPOSITE) ALARMI ---
-  //
-  // Bir grup "lokasyon" olarak isaretlendiginde (compositeEnabled), uyelerinin
-  // bir kismi down ise degraded, tamami down ise down kabul edilir ve bu iki
-  // durum ayri kanallara bildirilir. Karar mantigi lib/composite.ts'te saf
-  // fonksiyonlar halindedir; buradaki kod yalnizca veritabani ve bildirim
-  // baglantisini kurar.
+  // Grubun durumu lib/composite.ts'teki saf fonksiyonlarla hesaplanir; bildirim
+  // artik lokasyon olaylari (location_degraded / location_down / location_up)
+  // olarak kurallara gider.
+
+  async function migrateAllLegacyNotifications() {
+    try {
+      const pending = await prisma.workspace.findMany({ where: { notificationsMigratedAt: null }, select: { id: true } });
+      for (const w of pending) await ensureLegacyMigrated(w.id).catch(() => {});
+    } catch (e: any) { log(`ERROR: legacy notification migration sweep failed: ${e.message}`); }
+  }
 
   /** Uye monitorun kendi bildirimi, grup ayari nedeniyle bastirilmali mi? */
   function memberAlertsSuppressed(monitor: any): boolean {
     return !!(monitor?.group?.compositeEnabled && monitor.group.suppressMemberAlerts);
-  }
-
-  /**
-   * Grup kanal setini dispatchNotification'in bekledigi sekle donusturur.
-   * Kanallar veritabaninda JSON string olarak durur (bkz. prisma sema notu).
-   */
-  function groupNotificationTarget(group: any, set: 'degraded' | 'down') {
-    const raw = set === 'down' ? group.downChannels : group.degradedChannels;
-    let channels: any = {};
-    if (raw) {
-      try { channels = JSON.parse(raw) || {}; }
-      catch { log(`DEBUG: Group ${group.name} has malformed ${set}Channels JSON`); }
-    }
-    // url bilerek verilmiyor: bildirim metnindeki URL satiri, url yoksa
-    // tamamen atlanir.
-    return { name: group.name, ...channels };
   }
 
   async function evaluateCompositeGroups() {
@@ -2404,17 +2943,13 @@ async function startServer() {
           data: { compositeStatus: next }
         });
 
-        const set = channelSetFor(action, previous);
-        if (!set) continue;
-
-        const type = action === 'recovered' ? 'up' : action;
-        await dispatchNotification(
-          groupNotificationTarget(group, set),
-          group.workspace,
-          type as any,
-          compositeReason(action, group.monitors as any)
-        );
-        log(`DEBUG: Composite group ${group.name}: ${previous} -> ${next} (${set} channels)`);
+        const event: NotificationEvent = action === 'down' ? 'location_down' : action === 'degraded' ? 'location_degraded' : 'location_up';
+        await notify({
+          workspace: group.workspace, event, group: { id: group.id, name: group.name },
+          reason: compositeReason(action, group.monitors as any),
+          ctx: { locationRecoveredFrom: previous === 'down' ? 'location_down' : 'location_degraded' }
+        });
+        log(`DEBUG: Composite group ${group.name}: ${previous} -> ${next}`);
       } catch (e: any) {
         log(`DEBUG: Composite evaluation failed for group ${group.name}: ${e.message}`);
       }
@@ -2542,7 +3077,7 @@ async function startServer() {
           const last = sslAlertSentAt.get(monitor.id) || 0;
           if (Date.now() - last > 24 * 60 * 60 * 1000) {
             sslAlertSentAt.set(monitor.id, Date.now());
-            await dispatchNotification(monitor, monitor.workspace, 'ssl_expiry', `Certificate expires in ${ssl.daysLeft} day(s)`);
+            await notify({ workspace: monitor.workspace, event: 'ssl_expiry', monitor, reason: `Certificate expires in ${ssl.daysLeft} day(s)` });
           }
         }
         log(`DEBUG: SSL check for ${monitor.name}: valid=${ssl.valid}, daysLeft=${ssl.daysLeft}`);
@@ -2617,8 +3152,10 @@ async function startServer() {
       if (newConsecutiveFailures >= (monitor.alertThreshold || 2)) {
         if (!newIncidentActive || (newIncidentActive && newCurrentStatus === 'degraded' && alertType === 'down')) {
           newIncidentActive = true; newCurrentStatus = alertType;
-          if ((alertType === 'down' || monitor.notifyOnDegraded) && !memberAlertsSuppressed(monitor)) {
-            await dispatchNotification(monitor, monitor.workspace, alertType as any, errorMessage);
+          // Hangi olaylarin kime gidecegine artik kurallar karar verir
+          // (onceki monitor basina notifyOnDegraded ayarinin yerini aldi).
+          if (!memberAlertsSuppressed(monitor)) {
+            await notify({ workspace: monitor.workspace, event: alertType as NotificationEvent, monitor, reason: errorMessage });
           }
         } else if (newIncidentActive) {
           // Down'dan sonra yanit veren ama yavas servis artik "degraded".
@@ -2629,8 +3166,11 @@ async function startServer() {
     } else {
       // Toparlanma bildirimi yalnizca daha once bildirim gitmis olaylar icin:
       // notifyOnDegraded kapaliyken degraded'dan donus "RECOVERED" atmasin.
-      const wasNotified = monitor.currentStatus === 'down' || (monitor.currentStatus === 'degraded' && monitor.notifyOnDegraded);
-      if (newIncidentActive && wasNotified && !memberAlertsSuppressed(monitor)) await dispatchNotification(monitor, monitor.workspace, 'up');
+      // Kural yalnizca olayin baslangicina (down/degraded) aboneyse toparlanmayi alir.
+      const openedAs = monitor.currentStatus === 'down' || monitor.currentStatus === 'degraded' ? monitor.currentStatus : null;
+      if (newIncidentActive && openedAs && !memberAlertsSuppressed(monitor)) {
+        await notify({ workspace: monitor.workspace, event: 'up', monitor, ctx: { recoveredFrom: openedAs } });
+      }
       newIncidentActive = false; newConsecutiveFailures = 0; newCurrentStatus = 'up';
     }
 
@@ -2706,7 +3246,7 @@ async function startServer() {
       const lastSeen = (hb.lastChecked || hb.createdAt).getTime();
       if (now - lastSeen > limitMs && hb.currentStatus !== 'down') {
          const logEntry = await prisma.pingLog.create({ data: { monitorId: hb.id, status: 0, responseTime: 0, errorMessage: 'Heartbeat missed', statusCode: 0 } });
-         if (!memberAlertsSuppressed(hb)) await dispatchNotification(hb, hb.workspace, 'down', 'Heartbeat missed');
+         if (!memberAlertsSuppressed(hb)) await notify({ workspace: hb.workspace, event: 'heartbeat_missed', monitor: hb, reason: 'Heartbeat missed' });
          const updated = await prisma.monitor.update({ where: { id: hb.id }, data: { currentStatus: 'down', incidentActive: true, consecutiveFailures: hb.consecutiveFailures + 1 } });
          emitPingLog(logEntry, hb.workspaceId);
          emitMonitorUpdated(updated);
@@ -2785,7 +3325,9 @@ async function startServer() {
 
   server.listen(PORT, '0.0.0.0', () => {
     log(`DEBUG: Server listening on http://0.0.0.0:${PORT} in ${isProd ? 'PRODUCTION' : 'DEVELOPMENT'} mode`);
-    runPinger();
+    // Eski bildirim ayarlari pinger baslamadan once kanal+kurala tasinir; boylece
+    // ilk olaylar da yeni motorla gider.
+    migrateAllLegacyNotifications().finally(() => runPinger());
     runLogCleanup();
   });
 }

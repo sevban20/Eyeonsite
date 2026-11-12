@@ -6,6 +6,7 @@ import Navbar from './components/Navbar';
 import Dashboard from './components/Dashboard';
 import MonitorDetail from './components/MonitorDetail';
 import Alerts from './components/Alerts';
+import Notifications from './components/Notifications';
 import Settings from './components/Settings';
 import Auth from './components/Auth';
 import VerifyEmail from './components/VerifyEmail';
@@ -137,6 +138,11 @@ const AppContent = () => {
                 <Route path="/alerts" element={
                   <PrivateRoute>
                     <Alerts user={user} workspace={workspace} />
+                  </PrivateRoute>
+                } />
+                <Route path="/notifications" element={
+                  <PrivateRoute>
+                    <Notifications workspace={workspace} />
                   </PrivateRoute>
                 } />
                 <Route path="/settings" element={

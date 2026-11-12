@@ -56,6 +56,7 @@ model User {
   workspaces           Workspace[]
   workspaceMembers     WorkspaceMember[]
   apiKeys              ApiKey[]
+  teamMemberships      TeamMember[]
 }
 
 model Workspace {
@@ -76,6 +77,15 @@ model Workspace {
   logRetentionDays Int                @default(90)
   members          WorkspaceMember[]
   apiKeys          ApiKey[]
+
+  // Merkezi bildirim yonetimi
+  tags                 Tag[]
+  teams                Team[]
+  notificationChannels NotificationChannel[]
+  notificationRules    NotificationRule[]
+  // Monitor/lokasyon uzerindeki eski kanal alanlarinin kanal+kurala bir kerelik
+  // tasindigi an. null = henuz tasinmadi.
+  notificationsMigratedAt DateTime?
 }
 
 model MonitorGroup {
@@ -88,6 +98,7 @@ model MonitorGroup {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   monitors    Monitor[]
   statusPages PublicStatusPage[] // Implicit Many-to-Many
+  notificationRules NotificationRule[]
   createdAt   DateTime  @default(now())
 
   // --- Faz 3.5: lokasyon (composite) alarmi ---
@@ -135,6 +146,8 @@ model Monitor {
   pingLogs      PingLog[]
   maintenanceWindows MaintenanceWindow[]
   statusPages   PublicStatusPage[] // Implicit Many-to-Many
+  tags          Tag[]
+  notificationRules NotificationRule[]
   createdAt     DateTime  @default(now())
   alertThreshold        Int     @default(2)
   alertEmail            String?
@@ -265,11 +278,114 @@ model WorkspaceMember {
   id          String    @id @default(uuid())
   workspaceId String
   userId      String
-  role        String    @default("ADMIN") // OWNER or ADMIN
+  // ADMIN: her seyi yonetir. MEMBER: her seyi gorur; bildirimlerde yalnizca
+  // uyesi oldugu ekiplerin kanal ve kurallarini duzenleyebilir.
+  role        String    @default("ADMIN")
   createdAt   DateTime  @default(now())
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
+}
+
+// ─── Merkezi bildirim yonetimi ──────────────────────────────────────────────
+// Onceden bildirim adresleri her monitorde ayri alanlarda tutuluyordu. Artik:
+//   Kanal  = bildirimin gidecegi yer (Slack, e-posta ...), bir kez tanimlanir.
+//   Kural  = kapsam (tum / lokasyon / etiket / monitor) + olaylar + kanallar.
+//   Ekip   = is birimi; kanal ve kurallar bir ekibe ait olabilir, MEMBER rolundeki
+//            kullanicilar yalnizca kendi ekiplerininkileri duzenler.
+
+model Tag {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  color       String    @default("#71717a")
+  monitors    Monitor[]
+  notificationRules NotificationRule[]
+  createdAt   DateTime  @default(now())
+
+  @@unique([workspaceId, name])
+}
+
+model Team {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  color       String    @default("#f97316")
+  members     TeamMember[]
+  channels    NotificationChannel[]
+  rules       NotificationRule[]
+  createdAt   DateTime  @default(now())
+
+  @@unique([workspaceId, name])
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model NotificationChannel {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  teamId      String?
+  team        Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  name        String
+  type        String    // email | slack | teams | discord | telegram | zoom | webhook
+  config      String    // JSON: {to} | {url} | {chatId}; dogrulamasi lib/notifications.ts
+  enabled     Boolean   @default(true)
+  lastTestAt  DateTime?
+  lastTestOk  Boolean?
+  lastError   String?
+  rules       NotificationRule[]
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId])
+}
+
+model NotificationRule {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  teamId      String?
+  team        Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  name        String
+  enabled     Boolean   @default(true)
+  events      String[]  // bkz. NOTIFICATION_EVENTS (lib/notifications.ts)
+  allMonitors Boolean   @default(false)
+  monitors    Monitor[]
+  groups      MonitorGroup[]
+  tags        Tag[]
+  channels    NotificationChannel[]
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId])
+}
+
+model NotificationLog {
+  id          String   @id @default(uuid())
+  workspaceId String
+  ruleId      String?
+  channelId   String?
+  monitorId   String?
+  groupId     String?
+  subject     String?  // monitor ya da lokasyon adi (kayit silinse de okunabilsin)
+  channelName String?
+  event       String
+  success     Boolean
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
 }

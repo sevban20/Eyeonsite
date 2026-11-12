@@ -198,6 +198,16 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
     }
   };
 
+  const handleChangeRole = async (memberId: string, role: string) => {
+    try {
+      await api.put(`/workspaces/${workspace.id}/members/${memberId}/role`, { role });
+      setMembers(prev => prev.map(m => m.memberId === memberId ? { ...m, role } : m));
+      toast.success(t('settings.team_role_updated'));
+    } catch (err) {
+      toast.error(apiError(err, 'errors.member_role_failed'));
+    }
+  };
+
   const handleRemoveMember = async (memberId: string) => {
     if (!window.confirm(t('settings.team_remove_confirm'))) return;
     try {
@@ -462,8 +472,19 @@ export default function Settings({ user, workspace }: { user: any; workspace: an
                             ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' 
                             : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                         }`}>
-                          {member.role === 'OWNER' ? t('settings.team_role_owner') : t('settings.team_role_admin')}
+                          {member.role === 'OWNER' ? t('settings.team_role_owner') : member.role === 'MEMBER' ? t('settings.team_role_member') : t('settings.team_role_admin')}
                         </span>
+                        {isOwner && member.role !== 'OWNER' && (
+                          <select
+                            value={member.role}
+                            onChange={e => handleChangeRole(member.memberId, e.target.value)}
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-[11px] text-zinc-300 focus:outline-none focus:border-orange-500"
+                            title={t('settings.team_change_role')}
+                          >
+                            <option value="ADMIN">{t('settings.team_role_admin')}</option>
+                            <option value="MEMBER">{t('settings.team_role_member')}</option>
+                          </select>
+                        )}
                       </div>
                       {member.name && <p className="text-xs text-zinc-500 font-mono mt-0.5">{member.email}</p>}
                     </div>
