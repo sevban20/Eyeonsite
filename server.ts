@@ -2217,8 +2217,12 @@ async function startServer() {
             .filter((d: any) => d && d.total > 0);
           if (dayRows.length === 0) return { date: dateStr, uptime: -1, status: 'nodata', down: 0 };
 
-          const uptimes = dayRows.map((d: any) => (d.total - d.down) / d.total * 100);
-          const uptime = parseFloat(Math.max(...uptimes).toFixed(2));
+          // Gunluk yuzde, uyelerin TOPLAM basarili kontrol orani. Onceden en iyi
+          // uyenin yuzdesi aliniyordu: 41 servisin 9'u haftalardir down iken lokasyon
+          // %99.97 gorunuyordu. Gunun DURUMU (down / kismi / up) yine yedeklilik
+          // mantigiyla, asagidaki kurallarla belirlenir.
+          const totalChecks = dayRows.reduce((a: number, d: any) => a + d.total, 0);
+          const uptime = parseFloat((((totalChecks - dayRows.reduce((a: number, d: any) => a + d.down, 0)) / totalChecks) * 100).toFixed(2));
           const totalDown = dayRows.reduce((a: number, d: any) => a + d.down, 0);
           const allDown = dayRows.every((d: any) => d.down / d.total > 0.1);
           const anyDown = dayRows.some((d: any) => d.down > 0);
