@@ -8,7 +8,7 @@ import { useTranslation } from '../lib/i18n';
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const { t, apiError } = useTranslation();
   const token = searchParams.get('token');
 
   const [password, setPassword] = useState('');
@@ -36,7 +36,7 @@ export default function ResetPassword() {
       setTimeout(() => navigate('/auth'), 3000);
     } catch (err: any) {
       setStatus('error');
-      setError(err.response?.data?.error || t('auth.reset_failed'));
+      setError(apiError(err, 'auth.reset_failed'));
     } finally {
       setLoading(false);
     }

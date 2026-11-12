@@ -18,7 +18,7 @@ export default function StatusPage() {
   const [unlockError, setUnlockError] = useState('');
   // Var olmayan sayfa onceden "Tum Sistemler Calisiyor" gosteriyordu.
   const [notFound, setNotFound] = useState(false);
-  const { t, language } = useTranslation();
+  const { t, language, apiError } = useTranslation();
 
   // Erisim jetonu slug bazinda saklanir: ayni tarayicida farkli sayfalar
   // birbirinin jetonunu kullanamaz.
@@ -55,7 +55,7 @@ export default function StatusPage() {
     } catch (err: any) {
       setUnlockError(err.response?.status === 401
         ? t('status_page.wrong_password')
-        : (err.response?.data?.error || t('status_page.unlock_failed')));
+        : apiError(err, 'status_page.unlock_failed'));
     } finally {
       setUnlocking(false);
     }

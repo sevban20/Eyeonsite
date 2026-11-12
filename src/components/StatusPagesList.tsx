@@ -7,7 +7,7 @@ import api from '../lib/api';
 import { useTranslation } from '../lib/i18n';
 
 export default function StatusPagesList({ workspace }: any) {
-  const { t } = useTranslation();
+  const { t, apiError } = useTranslation();
   const [pages, setPages] = useState<any[]>([]);
   const [monitors, setMonitors] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
@@ -72,7 +72,7 @@ export default function StatusPagesList({ workspace }: any) {
       }
       setShowModal(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || t('status_pages.toast_save_failed'));
+      toast.error(apiError(err, 'status_pages.toast_save_failed'));
     }
   };
 
@@ -282,7 +282,7 @@ export default function StatusPagesList({ workspace }: any) {
                     <input 
                       type="text" 
                       required
-                      placeholder="e.g. MyCompany Status"
+                      placeholder={t('status_pages.title_placeholder')}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
                       value={formData.title}
                       onChange={e => setFormData({...formData, title: e.target.value})}

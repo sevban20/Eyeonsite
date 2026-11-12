@@ -11,7 +11,7 @@ export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { login } = useAuth();
-  const { t } = useTranslation();
+  const { t, apiError } = useTranslation();
   const token = searchParams.get('token');
 
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
@@ -34,7 +34,7 @@ export default function VerifyEmail() {
         setTimeout(() => navigate('/dashboard'), 2000);
       } catch (err: any) {
         setStatus('error');
-        setMessage(err.response?.data?.error || t('auth.verify_failed'));
+        setMessage(apiError(err, 'auth.verify_failed'));
       }
     };
 

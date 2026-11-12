@@ -6,6 +6,7 @@ import { tr as trLocale } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import api from '../lib/api';
 import { connectSocket } from '../lib/socket';
+import { translateCheckError } from '../lib/apiError';
 import { useTranslation } from '../lib/i18n';
 
 export default function Alerts({ workspace }: { user: any; workspace: any }) {
@@ -260,7 +261,7 @@ export default function Alerts({ workspace }: { user: any; workspace: any }) {
 
                         {(incident.type === 'DOWN' || incident.type === 'DEGRADED') && incident.errorMessage && (
                           <div className="flex items-center gap-1.5 text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded-md border border-zinc-800">
-                            <Hash className="w-3 h-3" /> {incident.errorMessage}
+                            <Hash className="w-3 h-3" /> {translateCheckError(incident.errorMessage, t, language)}
                           </div>
                         )}
                         

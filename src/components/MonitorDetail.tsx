@@ -14,12 +14,13 @@ import {
 import { format, subDays, formatDistanceToNow } from 'date-fns';
 import { tr as trLocale } from 'date-fns/locale';
 import { monitorStatusView } from './Dashboard';
+import { translateCheckError } from '../lib/apiError';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { useTranslation } from '../lib/i18n';
 
 export default function MonitorDetail({ user, workspace }: any) {
-  const { t, language } = useTranslation();
+  const { t, language, apiError } = useTranslation();
   const dateLocale = language === 'tr' ? trLocale : undefined;
   const { id } = useParams();
   const [incidentRows, setIncidentRows] = useState<any[]>([]);
@@ -312,7 +313,7 @@ export default function MonitorDetail({ user, workspace }: any) {
       counts[code] = (counts[code] || 0) + 1;
     });
     return Object.entries(counts).map(([code, count]) => ({
-      name: code === '0' ? 'Error' : `HTTP ${code}`,
+      name: code === '0' ? t('monitor.error') : `HTTP ${code}`,
       code: parseInt(code),
       value: count,
       fill: code.startsWith('2') ? '#10b981' : code.startsWith('3') ? '#3b82f6' : '#ef4444'
@@ -389,7 +390,7 @@ export default function MonitorDetail({ user, workspace }: any) {
       toast.success(t('monitor.toast_settings_saved'));
     } catch (error: any) {
       console.error('Error saving settings:', error);
-      toast.error(error?.response?.data?.error || t('monitor.toast_settings_failed'));
+      toast.error(apiError(error, 'monitor.toast_settings_failed'));
     }
   };
 
@@ -410,7 +411,7 @@ export default function MonitorDetail({ user, workspace }: any) {
       setShowAddMaintenance(false);
       toast.success(t('monitor.toast_maintenance_added'));
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || t('monitor.toast_maintenance_add_failed'));
+      toast.error(apiError(err, 'monitor.toast_maintenance_add_failed'));
     }
   };
 
@@ -544,7 +545,7 @@ export default function MonitorDetail({ user, workspace }: any) {
             >
               <div className="glass px-6 py-4 rounded-3xl border border-white/5 min-w-[140px] relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-16 h-16 bg-green-500/5 blur-2xl -z-10 group-hover:bg-green-500/10 transition-colors" />
-                <div className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.2em] mb-1">{t('monitor.uptime')} (24h)</div>
+                <div className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.2em] mb-1">{t('monitor.uptime')} ({t('monitor.period_24h')})</div>
                 <div className={`text-2xl font-black ${uptimeColor}`}>{uptimePercentage}%</div>
               </div>
               <div className="glass px-6 py-4 rounded-3xl border border-white/5 min-w-[140px] relative overflow-hidden group">
@@ -793,10 +794,10 @@ export default function MonitorDetail({ user, workspace }: any) {
 
                     <div className="h-[200px] w-full">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={uptimeStats} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                        <BarChart data={uptimeStats.map(s => ({ ...s, label: t(`monitor.period_${s.name}`) }))} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
                           <XAxis
-                            dataKey="name"
+                            dataKey="label"
                             stroke="#444"
                             fontSize={12}
                             tickLine={false}
@@ -884,7 +885,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                               <div key={stat.code} className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stat.fill }} />
-                                  <span className="text-[10px] font-mono font-bold text-zinc-300">{stat.name}</span>
+                                  <span className="text-[10px] font-mono font-bold text-zinc-300">{t(`monitor.period_${stat.name}`)}</span>
                                 </div>
                                 <span className="text-[10px] font-mono text-zinc-500">{stat.value} ({((stat.value / logs.length) * 100).toFixed(0)}%)</span>
                               </div>
@@ -936,7 +937,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                               </div>
                               {incident.errorMessage && (
                                 <div className="text-[9px] font-mono text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-400/20 max-w-xs truncate mt-2">
-                                  {incident.errorMessage}
+                                  {translateCheckError(incident.errorMessage, t, language)}
                                 </div>
                               )}
                             </div>
@@ -1043,13 +1044,13 @@ export default function MonitorDetail({ user, workspace }: any) {
                               </div>
                               {incident.errorMessage && (
                                 <div className="text-xs font-mono text-red-400 bg-red-400/10 px-3 py-2 rounded-lg border border-red-400/20 inline-block mt-1">
-                                  {t('monitor.error')}: {incident.errorMessage}
+                                  {t('monitor.error')}: {translateCheckError(incident.errorMessage, t, language)}
                                 </div>
                               )}
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-2">Status</div>
+                            <div className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-2">{t('monitor.status_label')}</div>
                             <div className={`text-xs font-mono font-bold px-3 py-1.5 rounded-md inline-block ${incident.type === 'DOWN' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                               }`}>
                               {checkLabel(incident.statusCode)}
@@ -1194,7 +1195,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                         </div>
                         <div>
                           <h3 className="text-2xl font-black text-white font-display tracking-tight">{t('monitor.settings_title')}</h3>
-                          <p className="text-sm text-zinc-500 font-medium">Update your service tracking parameters and alert rules.</p>
+                          <p className="text-sm text-zinc-500 font-medium">{t('monitor.settings_desc')}</p>
                         </div>
                       </div>
                     </div>
@@ -1286,7 +1287,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                               <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('dashboard.expected_keyword')}</label>
                               <input
                                 type="text"
-                                placeholder="e.g. 'Welcome' or '{&quot;status&quot;:&quot;ok&quot;}'"
+                                placeholder={t('dashboard.keyword_placeholder')}
                                 className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm font-bold"
                                 value={settings.expectedKeyword}
                                 onChange={e => setSettings({ ...settings, expectedKeyword: e.target.value })}
@@ -1391,19 +1392,19 @@ export default function MonitorDetail({ user, workspace }: any) {
                               min="100"
                               max="60000"
                               step="50"
-                              placeholder="e.g. 5000"
+                              placeholder={t('monitor.response_threshold_placeholder')}
                               className="w-32 bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-lg font-black text-center"
                               value={settings.responseTimeThreshold || ''}
                               onChange={e => setSettings({ ...settings, responseTimeThreshold: e.target.value ? parseInt(e.target.value) : null })}
                             />
-                            <span className="text-xs text-zinc-500 font-bold leading-tight">Maximum allowed response time<br />before triggering an alert</span>
+                            <span className="text-xs text-zinc-500 font-bold leading-tight max-w-[220px]">{t('monitor.response_threshold_desc')}</span>
                           </div>
                         </div>
 
                         <div className="flex items-center justify-between p-4 bg-zinc-950 border border-zinc-800 rounded-2xl">
                           <div>
-                            <p className="text-sm font-bold text-white">Alert on Performance Degradation</p>
-                            <p className="text-xs text-zinc-500 font-medium mt-1">Send notifications when response time exceeds the threshold above. If disabled, the UI will still show the degraded state but no alerts will be dispatched.</p>
+                            <p className="text-sm font-bold text-white">{t('monitor.notify_degraded')}</p>
+                            <p className="text-xs text-zinc-500 font-medium mt-1">{t('monitor.notify_degraded_desc')}</p>
                           </div>
                           <button
                             type="button"
@@ -1420,7 +1421,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                             <Mail className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                             <input
                               type="email"
-                              placeholder="alerts@example.com"
+                              placeholder={t('monitor.email_placeholder')}
                               className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-6 py-4 focus:outline-none focus:border-orange-500 transition-colors text-sm"
                               value={settings.alertEmail}
                               onChange={e => setSettings({ ...settings, alertEmail: e.target.value })}
@@ -1430,7 +1431,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                       </div>
 
                       <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Slack Webhook URL</label>
+                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.slack_webhook')}</label>
                         <div className="relative">
                           <Hash className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                           <input
@@ -1444,7 +1445,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                       </div>
 
                       <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Telegram Chat ID</label>
+                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.telegram_chat_id')}</label>
                         <div className="relative">
                           <MessageSquare className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                           <input
@@ -1458,7 +1459,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                       </div>
 
                       <div className="space-y-4">
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Zoom Webhook URL</label>
+                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('monitor.zoom_webhook')}</label>
                         <div className="relative">
                           <Video className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
                           <input
@@ -1519,7 +1520,7 @@ export default function MonitorDetail({ user, workspace }: any) {
                           className="bg-white text-zinc-950 px-12 py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl shadow-white/5 flex items-center gap-3"
                         >
                           <CheckCircle2 className="w-5 h-5" />
-                          Save Configuration
+                          {t('monitor.save_configuration')}
                         </button>
                       </div>
                     </form>
