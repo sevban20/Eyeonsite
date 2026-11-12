@@ -647,7 +647,8 @@
     "hours_label": "Support Hours",
     "hours_value": "Mon-Fri, 9AM - 6PM UTC",
     "response_label": "Response Time",
-    "response_value": "Within 24 hours"
+    "response_value": "Within 24 hours",
+    "failed": "Your message could not be sent. Please try again or email us."
   },
   "blog": {
     "badge": "Engineering Blog",
@@ -810,8 +811,11 @@
       "code": "6-digit code",
       "monitors": "monitors",
       "groups": "locations",
-      "color": "color"
-    }
+      "color": "color",
+      "message": "message (at least 10 characters)",
+      "subject": "subject"
+    },
+    "contact_unavailable": "The contact form is temporarily unavailable. Please email us directly."
   },
   "check_errors": {
     "timeout": "Timed out ({n} ms)",

@@ -481,6 +481,44 @@ async function startServer() {
     }
   });
 
+  // Iletisim formu. Onceden form hicbir yere gonderilmiyordu: arayuz 1 sn
+  // bekleyip "mesajiniz gonderildi" diyordu. Mesaj sistem SMTP'si uzerinden
+  // CONTACT_EMAIL'e (yoksa SMTP_FROM/SMTP_USER) gider; yanit adresi ziyaretcidir.
+  const contactLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5 });
+  const contactSchema = z.object({
+    name: z.string().trim().min(1).max(100),
+    email: z.string().trim().email().max(200),
+    subject: z.string().trim().max(200).optional().default(''),
+    message: z.string().trim().min(10).max(5000)
+  });
+  app.post('/api/contact', contactLimiter, async (req, res) => {
+    try {
+      const parsed = contactSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { name, email, subject, message } = parsed.data;
+      const smtpHost = process.env.SMTP_HOST, smtpUser = process.env.SMTP_USER, smtpPass = process.env.SMTP_PASS;
+      const to = process.env.CONTACT_EMAIL || process.env.SMTP_FROM || smtpUser;
+      if (!smtpHost || !smtpUser || !smtpPass || !to) {
+        log('WARN: contact form submitted but SMTP/CONTACT_EMAIL is not configured');
+        return res.status(503).json({ error: 'Contact form is not available right now' });
+      }
+      const smtpPort = parseInt(process.env.SMTP_PORT || '587');
+      const transporter = nodemailer.createTransport({ host: smtpHost, port: smtpPort, secure: smtpPort === 465, auth: { user: smtpUser, pass: smtpPass } });
+      const clean = (s: string) => s.replace(/[\r\n]+/g, ' ').slice(0, 200); // baslik enjeksiyonuna karsi
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || smtpUser,
+        to,
+        replyTo: `${clean(name)} <${clean(email)}>`,
+        subject: `[Eyeon.site iletişim] ${clean(subject || 'Yeni mesaj')}`,
+        text: `Gönderen: ${name} <${email}>\nIP: ${requestIp(req)}\n\n${message}`
+      });
+      await logAudit({ action: 'contact.submitted', ip: requestIp(req), metadata: { email } });
+      res.json({ success: true });
+    } catch (error: any) {
+      serverError(res, error);
+    }
+  });
+
   // Register
   app.post('/api/auth/register', async (req, res) => {
     try {

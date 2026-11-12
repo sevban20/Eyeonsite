@@ -4,24 +4,30 @@ import { Activity, Mail, MessageSquare, Send, MapPin, Phone, Clock } from 'lucid
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { useTranslation } from '../lib/i18n';
+import api from '../lib/api';
 
 export default function Contact() {
-  const { t } = useTranslation();
+  const { t, apiError } = useTranslation();
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Onceden form hicbir yere gonderilmiyordu (1 sn bekleyip basari gosteriyordu).
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
+    try {
+      await api.post('/contact', form);
       toast.success(t('contact.success'));
       setForm({ name: '', email: '', subject: '', message: '' });
+    } catch (err: any) {
+      toast.error(apiError(err, 'contact.failed'));
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   const contactInfo = [
-    { icon: Mail, label: t('contact.email_label'), value: 'support@uptimesaas.com' },
+    { icon: Mail, label: t('contact.email_label'), value: 'support@eyeon.site' },
     { icon: Clock, label: t('contact.hours_label'), value: t('contact.hours_value') },
     { icon: MessageSquare, label: t('contact.response_label'), value: t('contact.response_value') },
   ];
@@ -35,7 +41,7 @@ export default function Contact() {
           <div className="p-2 bg-orange-500 rounded-xl shadow-lg shadow-orange-500/20 group-hover:scale-110 transition-transform">
             <Activity className="w-5 h-5 text-white" />
           </div>
-          <span className="font-display tracking-tight">Uptime<span className="text-orange-500">SaaS</span></span>
+          <span className="font-display tracking-tight">Eyeon<span className="text-orange-500">.site</span></span>
         </Link>
       </nav>
 
@@ -90,7 +96,7 @@ export default function Contact() {
               <div className="space-y-2">
                 <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">{t('contact.message')}</label>
                 <textarea
-                  required rows={5}
+                  required minLength={10} maxLength={5000} rows={5}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-6 py-4 focus:outline-none focus:border-purple-500 transition-colors text-sm font-bold text-white placeholder-zinc-700 resize-none"
                   placeholder={t('contact.message_placeholder')}
                   value={form.message} onChange={e => setForm({ ...form, message: e.target.value })}

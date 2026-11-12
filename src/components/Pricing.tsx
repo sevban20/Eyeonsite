@@ -71,7 +71,7 @@ export default function Pricing() {
           <div className="p-2 bg-orange-500 rounded-xl shadow-lg shadow-orange-500/20 group-hover:scale-110 transition-transform">
             <Activity className="w-5 h-5 text-white" />
           </div>
-          <span className="font-display tracking-tight">Uptime<span className="text-orange-500">SaaS</span></span>
+          <span className="font-display tracking-tight">Eyeon<span className="text-orange-500">.site</span></span>
         </Link>
         <Link to="/auth" className="bg-white text-zinc-950 px-6 py-3 rounded-xl font-bold text-sm transition-all hover:scale-105">
           {t('pricing.get_started')}

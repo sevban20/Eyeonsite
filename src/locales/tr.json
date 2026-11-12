@@ -649,7 +649,8 @@
     "hours_label": "Destek Saatleri",
     "hours_value": "Pzt-Cum, 09:00 - 18:00 TSİ",
     "response_label": "Yanıt Süresi",
-    "response_value": "24 saat içinde"
+    "response_value": "24 saat içinde",
+    "failed": "Mesajın gönderilemedi. Tekrar dene ya da bize e-posta gönder."
   },
   "blog": {
     "badge": "Mühendislik Blogu",
@@ -812,8 +813,11 @@
       "code": "6 haneli kod",
       "monitors": "monitörler",
       "groups": "lokasyonlar",
-      "color": "renk"
-    }
+      "color": "renk",
+      "message": "mesaj (en az 10 karakter)",
+      "subject": "konu"
+    },
+    "contact_unavailable": "İletişim formu şu an kullanılamıyor. Lütfen doğrudan e-posta gönder."
   },
   "check_errors": {
     "timeout": "Zaman aşımı ({n} ms)",

@@ -64,6 +64,14 @@ export default function StatusPage() {
   useEffect(() => {
     if (!slug) return;
 
+    // Ayni bilesen baska bir slug'a gecince onceki sayfanin kilit/bulunamadi
+    // durumu tasiniyordu.
+    setLocked(null);
+    setNotFound(false);
+    setStatusPage(null);
+    setMonitors([]);
+    setLoading(true);
+
     const fetchStatusPage = async () => {
       try {
         setNotFound(false);

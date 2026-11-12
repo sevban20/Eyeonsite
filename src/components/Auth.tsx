@@ -225,7 +225,7 @@ export default function Auth() {
             <Activity className="w-10 h-10" />
           </motion.div>
           <h1 className="text-4xl font-bold mb-3 font-display text-white tracking-tight">
-            {isLogin ? t('auth.welcome_back') : t('auth.create_account')}
+            {view === 'forgot_password' ? t('auth.forgot_password') : isLogin ? t('auth.welcome_back') : t('auth.create_account')}
           </h1>
           <p className="text-zinc-500 font-medium">{t('auth.subtitle')}</p>
         </div>

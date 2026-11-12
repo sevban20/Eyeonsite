@@ -47,6 +47,7 @@ const RULES: Rule[] = [
   [/^(Forbidden|Forbidden: Admin access required)$/i, 'errors.forbidden'],
   [/^(Not found|Workspace not found|Group not found|Member not found)$/i, 'errors.not_found'],
   [/^Internal server error$/i, 'errors.server'],
+  [/^Contact form is not available/i, 'errors.contact_unavailable'],
 ];
 
 // Dogrulama hatalari "alan: mesaj" bicimindedir (sunucudaki badRequest).
@@ -59,6 +60,7 @@ const FIELD_KEYS: Record<string, string> = {
   customHeaders: 'errors.fields.custom_headers', expectedKeyword: 'errors.fields.keyword',
   slackWebhook: 'errors.fields.webhook', discordWebhook: 'errors.fields.webhook', teamsWebhook: 'errors.fields.webhook',
   zoomWebhook: 'errors.fields.webhook', genericWebhook: 'errors.fields.webhook', token: 'errors.fields.code',
+  message: 'errors.fields.message', subject: 'errors.fields.subject',
   monitorIds: 'errors.fields.monitors', groupIds: 'errors.fields.groups', themeColor: 'errors.fields.color',
 };
 

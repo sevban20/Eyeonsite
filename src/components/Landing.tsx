@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 import { Activity, Shield, Zap, Globe, ArrowRight, CheckCircle2, BarChart3, Bell, Monitor, Cpu, Lock, Eye } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from '../lib/i18n';
+import PublicHeader from './PublicHeader';
 
 export default function Landing() {
   const { t } = useTranslation();
 
   return (
     <div className="relative overflow-hidden bg-zinc-950">
+      <PublicHeader />
       {/* Background Elements */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1200px] h-[800px] bg-orange-500/5 blur-[150px] rounded-full -z-10" />
       <div className="absolute top-[20%] right-[10%] w-[400px] h-[400px] bg-blue-500/5 blur-[100px] rounded-full -z-10" />
@@ -157,7 +159,6 @@ export default function Landing() {
               <ul className="space-y-2 text-sm text-zinc-500">
                 <li><a href="#features" className="hover:text-orange-500 transition-colors">{t('landing.footer_features')}</a></li>
                 <li><Link to="/pricing" className="hover:text-orange-500 transition-colors">{t('landing.footer_pricing')}</Link></li>
-                <li><Link to="/blog" className="hover:text-orange-500 transition-colors">{t('landing.footer_status_page')}</Link></li>
               </ul>
             </div>
             <div className="space-y-4">
