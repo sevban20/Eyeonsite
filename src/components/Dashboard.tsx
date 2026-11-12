@@ -589,7 +589,7 @@ export default function Dashboard({ user, workspace }: DashboardProps) {
               <div className={`p-2 rounded-xl ${stat.bg}`}>
                 <stat.icon className={`w-5 h-5 ${stat.color}`} />
               </div>
-              <span className="text-zinc-400 text-xs font-bold uppercase tracking-widest">{stat.label}</span>
+              <span className="text-zinc-400 text-[10px] sm:text-xs font-bold uppercase tracking-wide sm:tracking-widest leading-tight min-w-0">{stat.label}</span>
             </div>
             <div className="text-4xl font-bold text-white font-display">{stat.value}</div>
           </motion.div>

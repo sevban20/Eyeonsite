@@ -240,7 +240,8 @@
     "active_degraded": "Degraded",
     "downtime": "Downtime",
     "loading": "Loading Alerts Data...",
-    "performance_degraded": "Performance degraded"
+    "performance_degraded": "Performance degraded",
+    "show_more": "Show more ({count} left)"
   },
   "settings": {
     "label": "Workspace Settings",

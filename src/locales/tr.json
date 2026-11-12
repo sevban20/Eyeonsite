@@ -240,7 +240,8 @@
     "active_degraded": "Performans Sorunu",
     "downtime": "Kesinti Süresi",
     "loading": "Uyarı Verileri Yükleniyor...",
-    "performance_degraded": "Performans düşüşü"
+    "performance_degraded": "Performans düşüşü",
+    "show_more": "Daha fazla göster ({count} kaldı)"
   },
   "settings": {
     "label": "Çalışma Alanı Ayarları",

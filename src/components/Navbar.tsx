@@ -42,7 +42,7 @@ export default function Navbar({ user, workspace }: NavbarProps) {
           <div className="p-2 bg-orange-500 rounded-xl shadow-lg shadow-orange-500/20 group-hover:scale-110 transition-transform">
             <Activity className="w-5 h-5 text-white" />
           </div>
-          <span className="font-display tracking-tight flex items-center gap-0">
+          <span className="font-display tracking-tight hidden sm:flex items-center gap-0">
             Eye
             <span className="relative flex items-center justify-center mx-0.5">
               <Eye className="w-5 h-5 text-orange-500 stroke-[3]" />
@@ -137,7 +137,7 @@ export default function Navbar({ user, workspace }: NavbarProps) {
       </div>
 
       {mobileOpen && (
-        <div className="md:hidden absolute top-20 left-0 right-0 bg-zinc-950/95 backdrop-blur border-b border-zinc-800 px-4 py-3 flex flex-col gap-1">
+        <div className="md:hidden absolute top-20 left-0 right-0 bg-zinc-950 border-b border-zinc-800 shadow-2xl shadow-black/60 px-4 py-3 flex flex-col gap-1">
           {navItems.map(item => {
             const isActive = location.pathname === item.path;
             return (
